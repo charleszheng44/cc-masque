@@ -85,6 +85,27 @@ Optional alias on the host:
 alias claude='docker exec claude claude'
 ```
 
+## Scoped permissions (alternative to `--dangerously-skip-permissions`)
+
+If you'd rather allow a specific set of commands instead of bypassing permissions entirely, mount a `settings.json` at `/root/.claude/settings.json`. A starter file is included in this repo — it allows common `gh` and `git` operations and denies destructive ones (force push, hard reset, `rm -rf`).
+
+```bash
+docker run -d --name claude \
+  -e CLAUDE_CODE_OAUTH_TOKEN=... \
+  -e GH_TOKEN=... \
+  -e GIT_AUTHOR_NAME="Your Name" \
+  -e GIT_AUTHOR_EMAIL="you@example.com" \
+  -e GIT_COMMITTER_NAME="Your Name" \
+  -e GIT_COMMITTER_EMAIL="you@example.com" \
+  -v "$PWD/settings.json:/root/.claude/settings.json:ro" \
+  -v "$PWD":/workspace \
+  claude-code
+```
+
+Then drop `--dangerously-skip-permissions` from your `claude -p` calls. Allow-listed commands run directly; anything else will prompt and hang in `-p` mode — that's the signal to add it to `settings.json`.
+
+**Pattern syntax:** `Bash(cmd:*)` matches any args, `Bash(cmd)` requires exact match. `deny` rules override `allow`. Edit `settings.json` and restart the container to pick up changes.
+
 ## Working directories
 
 `WORKDIR` defaults to `/workspace`. Control what lives there with `-v`, and override per-command with `-w`:
