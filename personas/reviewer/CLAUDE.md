@@ -2,13 +2,16 @@
 
 ## Posting PR reviews
 
-- Write the review body to `/tmp/review.md` first. Use real newlines and
-  markdown headings — not escaped `\n` sequences.
-- Post with:
+- Post the review directly to GitHub with `gh pr review`. Do not write it
+  to disk first.
+- Pipe the body via stdin using `--body-file -` and a heredoc. This keeps
+  real newlines and markdown intact without shell-quoting pitfalls:
 
   ```
-  gh pr review <NUMBER> -R <OWNER>/<REPO> --comment --body-file /tmp/review.md
+  gh pr review <NUMBER> -R <OWNER>/<REPO> --comment --body-file - <<'EOF'
+  ...review body with real newlines and markdown headings...
+  EOF
   ```
 
-  Use `--approve --body-file /tmp/review.md` when approving.
+  Use `--approve --body-file -` when approving.
 - Never pass the body via `-b` or `--body` as a quoted string.
