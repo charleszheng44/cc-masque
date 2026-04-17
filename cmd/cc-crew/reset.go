@@ -13,6 +13,15 @@ import (
 	"github.com/charleszheng44/cc-crew/internal/worktree"
 )
 
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
 func runReset(args []string) int {
 	fs := flag.NewFlagSet("cc-crew reset", flag.ContinueOnError)
 	repo := fs.String("repo", os.Getenv("CC_REPO"), "Local repo path (default: $PWD)")
@@ -29,14 +38,15 @@ func runReset(args []string) int {
 		fmt.Fprintln(os.Stderr, err)
 		return 1
 	}
+	defaults := config.Defaults()
 	o := reset.Options{
 		GH: github.NewGhClient(), Docker: docker.New(),
 		WT:              worktree.New(*repo),
 		Repo:            github.Repo{Owner: owner, Name: name},
-		TaskLabel:       "claude-task",
-		ProcessingLabel: "claude-processing",
-		ReviewLabel:     "claude-review",
-		ReviewingLabel:  "claude-reviewing",
+		TaskLabel:       firstNonEmpty(os.Getenv("CC_TASK_LABEL"), defaults.TaskLabel),
+		ProcessingLabel: firstNonEmpty(os.Getenv("CC_PROCESSING_LABEL"), defaults.ProcessingLabel),
+		ReviewLabel:     firstNonEmpty(os.Getenv("CC_REVIEW_LABEL"), defaults.ReviewLabel),
+		ReviewingLabel:  firstNonEmpty(os.Getenv("CC_REVIEWING_LABEL"), defaults.ReviewingLabel),
 	}
 	plan, err := reset.Compute(ctx, o)
 	if err != nil {

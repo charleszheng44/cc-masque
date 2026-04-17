@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -115,6 +116,10 @@ func Execute(ctx context.Context, o Options, p Plan, out io.Writer) error {
 	}
 	for _, wt := range p.Worktrees {
 		fmt.Fprintf(out, "remove worktree: %s\n", wt)
+		if err := o.WT.Remove(ctx, filepath.Base(wt)); err != nil {
+			// Best-effort; log and continue.
+			fmt.Fprintf(out, "  (warning: remove worktree %s: %v)\n", wt, err)
+		}
 	}
 	_ = o.WT.Prune(ctx)
 	return nil
