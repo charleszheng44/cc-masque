@@ -184,7 +184,8 @@ OUTER:
 			}
 		}
 		issues = append(issues, Issue{
-			Number: g.Number, Title: g.Title, Body: g.Body, State: g.State,
+			Number: g.Number, Title: g.Title, Body: g.Body,
+			State:  strings.ToLower(g.State),
 			Labels: labels,
 		})
 	}
@@ -218,7 +219,8 @@ OUTER:
 			}
 		}
 		prs = append(prs, PullRequest{
-			Number: g.Number, Title: g.Title, Body: g.Body, State: g.State,
+			Number: g.Number, Title: g.Title, Body: g.Body,
+			State:  strings.ToLower(g.State),
 			Labels: labels, HeadRefOid: g.HeadRefOid,
 			HeadRefName: g.HeadRefName, BaseRefName: g.BaseRefName,
 		})
@@ -237,7 +239,8 @@ func (c *ghClient) GetPR(ctx context.Context, r Repo, n int) (PullRequest, error
 		return PullRequest{}, err
 	}
 	return PullRequest{
-		Number: g.Number, Title: g.Title, Body: g.Body, State: g.State,
+		Number: g.Number, Title: g.Title, Body: g.Body,
+		State:  strings.ToLower(g.State),
 		Labels: flattenLabels(g.Labels), HeadRefOid: g.HeadRefOid,
 		HeadRefName: g.HeadRefName, BaseRefName: g.BaseRefName,
 	}, nil
