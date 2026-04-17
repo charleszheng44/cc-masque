@@ -49,3 +49,22 @@ func TestCurrentUserParses(t *testing.T) {
 		t.Fatalf("got %q", u)
 	}
 }
+
+func TestListIssuesParsesAndFiltersWithout(t *testing.T) {
+	body := `[
+	 {"number":1,"title":"t1","body":"b","state":"open","labels":[{"name":"claude-task"}]},
+	 {"number":2,"title":"t2","body":"b","state":"open","labels":[{"name":"claude-task"},{"name":"claude-processing"}]}
+	]`
+	bin := fakeBin(t, `cat <<'EOF'
+`+body+`
+EOF`)
+	c := newGhClientWithBin(bin)
+	got, err := c.ListIssues(context.Background(), Repo{Owner: "a", Name: "b"},
+		[]string{"claude-task"}, []string{"claude-processing"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Number != 1 {
+		t.Fatalf("want [1], got %+v", got)
+	}
+}
