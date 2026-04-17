@@ -20,8 +20,7 @@ func main() {
 	case "status":
 		os.Exit(runStatus(os.Args[2:]))
 	case "reset":
-		fmt.Fprintln(os.Stderr, "reset: not implemented yet")
-		os.Exit(1)
+		os.Exit(runReset(os.Args[2:]))
 	case "help", "-h", "--help":
 		usage()
 	default:
