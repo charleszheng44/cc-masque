@@ -13,6 +13,10 @@ RUN printf '%s' '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":
 COPY scripts/cc-crew-run /usr/local/bin/cc-crew-run
 RUN chmod +x /usr/local/bin/cc-crew-run
 
+# Bake personas into the image so cc-crew-run can install the right
+# CLAUDE.md (and settings.json) for $CC_ROLE at container start.
+COPY personas /etc/cc-crew/personas
+
 WORKDIR /workspace
 
 # If CC_ROLE is set, run the cc-crew entrypoint (dispatched by the

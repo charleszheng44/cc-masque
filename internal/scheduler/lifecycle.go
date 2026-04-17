@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"time"
 
@@ -113,7 +114,6 @@ func (l *Lifecycle) buildRunSpec(number int, wtPath string) docker.RunSpec {
 	env := map[string]string{
 		"CC_ROLE":                 kindName(l.Kind),
 		"CC_MODEL":                l.Model,
-		"CC_MAX_TURNS":            fmt.Sprint(l.MaxTurns),
 		"CC_REPO":                 l.Repo.String(),
 		"GH_TOKEN":                l.RoleGHToken,
 		"CLAUDE_CODE_OAUTH_TOKEN": l.ClaudeOAuth,
@@ -122,6 +122,13 @@ func (l *Lifecycle) buildRunSpec(number int, wtPath string) docker.RunSpec {
 		"GIT_AUTHOR_EMAIL":        l.GitEmail,
 		"GIT_COMMITTER_NAME":      l.GitName,
 		"GIT_COMMITTER_EMAIL":     l.GitEmail,
+		// Containers are ephemeral (--rm) with a bind-mounted worktree; this
+		// lets `claude --dangerously-skip-permissions` run as root inside.
+		"IS_SANDBOX": "1",
+	}
+	// Only cap turns when the operator asked for a cap; absent = unlimited.
+	if l.MaxTurns > 0 {
+		env["CC_MAX_TURNS"] = fmt.Sprint(l.MaxTurns)
 	}
 	if l.Kind == claim.KindImplementer {
 		labels["cc-crew.issue"] = fmt.Sprint(number)
@@ -137,6 +144,8 @@ func (l *Lifecycle) buildRunSpec(number int, wtPath string) docker.RunSpec {
 		Name:   name,
 		Labels: labels,
 		Env:    env,
+		Stdout: os.Stdout,
+		Stderr: os.Stderr,
 		Mounts: []docker.Mount{
 			{HostPath: wtPath, ContainerPath: "/workspace"},
 			{
