@@ -164,3 +164,39 @@ docker exec claude gh api user -q .login
 ```bash
 docker rm -f claude
 ```
+
+## Orchestrator: `cc-crew up` / `status` / `reset`
+
+cc-crew includes a Go CLI that watches a GitHub repo and dispatches
+this image automatically: issues labeled `claude-task` get picked up
+by the implementer persona, PRs labeled `claude-review` by the reviewer.
+
+### Build
+
+```bash
+make build                 # produces ./cc-crew
+```
+
+### Run
+
+From inside a clone of the target repo:
+
+```bash
+export GH_TOKEN_IMPLEMENTER=github_pat_...
+export GH_TOKEN_REVIEWER=github_pat_...
+export GH_TOKEN=$GH_TOKEN_IMPLEMENTER      # used for orchestrator's own API calls
+export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+export IMPLEMENTER_GIT_NAME="implementer-bot"
+export IMPLEMENTER_GIT_EMAIL="impl@example.com"
+export REVIEWER_GIT_NAME="reviewer-bot"
+export REVIEWER_GIT_EMAIL="rev@example.com"
+
+./cc-crew up                       # foreground; Ctrl-C to stop
+./cc-crew up --max-implementers 3 --max-reviewers 2
+./cc-crew status                   # in another terminal; stateless
+./cc-crew reset                    # dry run
+./cc-crew reset --yes              # actually clean up cc-crew state
+```
+
+See `docs/superpowers/specs/2026-04-16-cc-crew-orchestrator-design.md`
+for the full design.
