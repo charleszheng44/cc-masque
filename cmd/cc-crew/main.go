@@ -18,8 +18,7 @@ func main() {
 	case "up":
 		os.Exit(runUp(os.Args[2:]))
 	case "status":
-		fmt.Fprintln(os.Stderr, "status: not implemented yet")
-		os.Exit(1)
+		os.Exit(runStatus(os.Args[2:]))
 	case "reset":
 		fmt.Fprintln(os.Stderr, "reset: not implemented yet")
 		os.Exit(1)
