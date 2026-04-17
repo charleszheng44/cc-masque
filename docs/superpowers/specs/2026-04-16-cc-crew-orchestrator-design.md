@@ -17,7 +17,7 @@ The project extends the existing cc-masque repo (to be renamed to cc-crew), whic
 
 - Trigger Claude Code by labeling GitHub issues or PRs on the target repo.
 - Single local orchestrator process; no public infrastructure, outbound network only.
-- Per-persona concurrency caps (default 5 implementers, 5 reviewers), configurable.
+- Per-persona concurrency caps (default 3 implementers, 2 reviewers), configurable.
 - Polling-only event source (60s default tick), no webhook/smee relay.
 - Atomic claim via git refs, so a second orchestrator on a second machine stays safe.
 - Stale-claim reclaim after a configurable timeout, so a crashed orchestrator does not block work indefinitely.
@@ -89,10 +89,11 @@ Three layers:
 | `claude-task` | Issue | Queued for implementer |
 | `claude-processing` | Issue | Implementer holds lock (cosmetic) |
 | `claude-done` | Issue | Implementer finished, PR opened |
-| `claude-failed` | Issue | Implementer failed |
 | `claude-review` | PR | Queued for reviewer |
 | `claude-reviewing` | PR | Reviewer holds lock (cosmetic) |
 | `claude-reviewed` | PR | Reviewer finished |
+
+Failure has no dedicated label. A failed run drops the lock and leaves the queue label (`claude-task` / `claude-review`) intact so the task is retried on the next tick. If a task fails persistently, the user removes the queue label manually to stop retrying.
 
 Labels are visible in the GitHub UI. Refs are the source of truth — no behavior depends on a label being correctly set.
 
@@ -116,11 +117,14 @@ cc-crew up --max-implementers 3 --max-reviewers 8
 cc-crew up --task-label needs-claude            # override claude-task
 cc-crew up --auto-review                        # auto-label implementer PRs for reviewer
 cc-crew status                                  # stateless snapshot
+cc-crew reset [--yes]                           # destructive cleanup
 ```
 
 `cc-crew up` runs foreground with streaming logs. Ctrl-C (SIGINT) is a clean shutdown: stop polling, `docker kill` all running task containers, release their locks, exit 0.
 
 `cc-crew status` is stateless: it reads from GitHub (labels, refs, timestamp tags) and from `docker ps --filter label=cc-crew.repo=<owner/name>`. It works whether any orchestrator is running and shows a joined view: running containers, queued tasks waiting on a semaphore, and claimed-but-unfinished tasks (with claim age).
+
+`cc-crew reset` is the bulk-cleanup escape hatch — see §7.3.
 
 ### 7.1 Config surface
 
@@ -157,6 +161,31 @@ All flags have env fallbacks.
 | `REVIEWER_GIT_EMAIL` | yes (if reviewer enabled) | Same, for reviewer |
 
 \* At least one of `GH_TOKEN_<ROLE>` or `GH_TOKEN` must be set. Per-persona tokens let the two personas act as distinct GitHub identities (the original motivation for cc-masque). A single shared `GH_TOKEN` is supported for simpler setups.
+
+### 7.3 Reset — bulk cleanup
+
+`cc-crew reset [--yes]` is the destructive escape hatch. It restores the target repo to a clean "all work queued" position, useful when things get wedged — orphaned locks, containers killed out-of-band, manual label edits that left the state incoherent.
+
+What it does, in order:
+
+1. **Kill running task containers** for this repo: every container labeled `cc-crew.repo=<owner/name>` is `docker kill`ed.
+2. **Delete implementer lock branches**: enumerate `refs/heads/claude/issue-*`; for each, parse the issue number `N`, `DELETE /git/refs/heads/claude/issue-N`.
+3. **Delete implementer claim tags**: enumerate `refs/tags/claim/issue-*/*`; delete each.
+4. **Delete reviewer lock tags**: enumerate `refs/tags/review-lock/pr-*`; delete each.
+5. **Delete reviewer claim tags**: enumerate `refs/tags/review-claim/pr-*/*`; delete each.
+6. **Restore issue labels**: for each issue that had a cc-crew ref deleted above, and whose GitHub state is `open`:
+   - Remove `claude-processing` if present.
+   - Ensure `claude-task` is present.
+7. **Restore PR labels**: for each PR that had a cc-crew ref deleted above, and whose state is `open`:
+   - Remove `claude-reviewing` if present.
+   - Ensure `claude-review` is present.
+8. **Prune host worktrees**: `git worktree remove --force` every path under `.claude-worktrees/` in the target repo; then `git worktree prune`.
+
+Safety:
+- **Scope is strict.** Reset only touches refs under the four cc-crew prefixes (`refs/heads/claude/issue-*`, `refs/tags/claim/issue-*`, `refs/tags/review-lock/pr-*`, `refs/tags/review-claim/pr-*`) and the six cc-crew labels. Any other branches, tags, or labels are untouched.
+- **Dry-run default.** Without `--yes`, reset prints the plan (counts + examples) and exits without making any change. `--yes` proceeds.
+- **Running orchestrator.** If `cc-crew up` is running against the same repo, reset still works — the orchestrator's next tick observes the restored state and picks up the requeued work. For deterministic behavior, stop the orchestrator first (Ctrl-C); the CLI prints a warning if it detects running cc-crew containers.
+- **Closed issues / merged PRs.** Step 6/7 skip issues and PRs that are not open — we never re-add `claude-task` to a closed issue or `claude-review` to a merged PR.
 
 ## 8. Orchestrator internals
 
@@ -202,7 +231,7 @@ POST /repos/{owner}/{repo}/git/refs
   other status → surfaced, logged, next tick retries
 ```
 
-On successful claim, the orchestrator immediately creates the timestamp tag under the parallel prefix. A 60-second grace period in reclaim covers the narrow window where the lock exists but the timestamp tag does not.
+On successful claim, the orchestrator immediately creates the timestamp tag under the parallel prefix. If tag creation fails (network blip), the next orchestrator that sees an orphan lock re-creates the tag atomically — see §8.3 step 2.
 
 ### 8.3 Reclaim sweeper
 
@@ -236,13 +265,18 @@ Per tick, for each `refs/heads/claude/issue-*` and `refs/tags/review-lock/pr-*`:
      then `gh pr edit <PR> --add-label claude-review`. The next poll tick
      picks it up for review.
 6. On nonzero exit / timeout:
-     remove claude-processing; add claude-failed.
-     leave lock branch + timestamp tag for debugging.
+     remove claude-processing (leave claude-task intact for retry).
+     delete all timestamp tags under claim/issue-N/.
+     delete the lock branch refs/heads/claude/issue-N.
+     (No failure label. The issue returns to the queue and is picked up
+     on the next tick, possibly by a different orchestrator.)
 7. Always: git worktree remove --force .claude-worktrees/issue-N.
 8. Release semaphore slot.
 ```
 
-Reviewer lifecycle is symmetric: the container uses `--permission-mode plan` (read-only), posts the review via `gh pr review --body-file`, labels transition `claude-review`/`claude-reviewing` → `claude-reviewed`.
+Reviewer lifecycle is symmetric:
+- Success: the container uses `--permission-mode plan` (read-only) and posts the review via `gh pr review --body-file`; labels transition `claude-review`/`claude-reviewing` → `claude-reviewed`.
+- Failure / timeout: remove `claude-reviewing`, delete all timestamp tags under `review-claim/pr-N/`, delete the lock tag `refs/tags/review-lock/pr-N`; leave `claude-review` intact for retry.
 
 ### 8.5 Docker invocation shape (implementer)
 
@@ -314,7 +348,7 @@ The entrypoint:
    - `--permission-mode plan` for reviewer
    - `--model "$CC_MODEL"` and `--max-turns "$CC_MAX_TURNS"` for both
 
-Claude's CLAUDE.md (per-persona) instructs it to do the role-specific work itself: the implementer commits, pushes, and runs `gh pr create`; the reviewer runs `gh pr review --body-file`. The entrypoint does not wrap or post-process this — it simply propagates `claude`'s exit code. The orchestrator reads that exit code to decide `claude-done` vs `claude-failed`.
+Claude's CLAUDE.md (per-persona) instructs it to do the role-specific work itself: the implementer commits, pushes, and runs `gh pr create`; the reviewer runs `gh pr review --body-file`. The entrypoint does not wrap or post-process this — it simply propagates `claude`'s exit code. The orchestrator reads that exit code to decide between the success path (`claude-done` / `claude-reviewed`) and the retry path (drop the lock, leave the queue label intact).
 
 ## 10. File layout
 
@@ -351,19 +385,20 @@ cc-crew/                                # renamed from cc-masque
 
 | Failure | Detection | Recovery |
 |---|---|---|
-| Container exits non-zero | `docker wait` nonzero | `claude-failed`; keep lock + tag for inspection; remove worktree; release semaphore |
-| Container hangs | `MAX_TASK_SECONDS` expires | `docker kill`; same as above |
-| Orchestrator crashes mid-task | N/A (dead process) | On next orchestrator start, reclaim reaps locks older than `RECLAIM_SECS` |
-| GitHub API unreachable / rate-limited | API call errors | Log, back off one tick, do not touch labels; work stays queued in GitHub |
-| Two orchestrators race on same issue | `POST /git/refs` returns 422 | Loser releases semaphore slot, continues |
-| Lock created but timestamp tag creation fails | Reclaim sees lock with no timestamp | 60s grace period, then delete orphan lock |
-| Claude finishes but `gh pr create` fails | Entrypoint exits nonzero | Marked `claude-failed`; branch is pushed, user can open PR manually or re-label |
-| Claude force-pushes or touches other branches | Not prevented by design | CLAUDE.md forbids it; follow-up could add a pre-push hook |
-| Prompt injection exfiltrates GH token | Not prevented (no egress proxy) | Accepted risk for v1; scoped token limits blast radius |
-| User Ctrl-C's `cc-crew up` | SIGINT handler | Stop polling; `docker kill` all in-flight task containers; for each killed task remove `claude-processing`/`claude-reviewing` and delete its lock ref + timestamp tag (so the work re-appears on the next orchestrator start); wait for container exits; exit 0 |
-| Host disk fills (worktrees accumulate) | Worktree create fails | Surface error, mark failed; operator runs `git worktree prune` |
-| PR force-pushed mid-review | Reviewer reads stale diff | Review posts against old lines; re-label `claude-review` to retrigger |
-| Issue re-labeled after completion | Reclaim's "already-done" check returns true | Leave branch; next tick sees `claude-done` and skips |
+| Container exits non-zero | `docker wait` nonzero | Remove `claude-processing`/`claude-reviewing`, delete lock ref + all timestamp tags, remove worktree, release semaphore. Queue label (`claude-task`/`claude-review`) stays, so work is retried on next tick. |
+| Container hangs | `MAX_TASK_SECONDS` expires | `docker kill`, then same as above. |
+| Orchestrator crashes mid-task | N/A (dead process) | Reclaim reaps locks older than `RECLAIM_SECS`; queue label is untouched, so the next orchestrator picks the work back up. |
+| GitHub API unreachable / rate-limited | API call errors | Log, back off one tick, do not touch labels; work stays queued in GitHub. |
+| Two orchestrators race on same issue | `POST /git/refs` returns 422 | Loser releases semaphore slot, continues. |
+| Lock created but timestamp tag creation fails | Reclaim sees lock with no timestamp | Any orchestrator re-creates the timestamp tag atomically pointing at the lock SHA (§8.3 step 2). No data loss; reclaim window restarts. |
+| Claude finishes but `gh pr create` fails | Entrypoint exits nonzero | Lock released, queue label intact → retried on next tick. If the repeat also fails (same issue), user investigates and removes `claude-task` to stop the loop. |
+| Claude force-pushes or touches other branches | Not prevented by design | CLAUDE.md forbids it; follow-up could add a pre-push hook. |
+| Prompt injection exfiltrates GH token | Not prevented (no egress proxy) | Accepted risk for v1; scoped token limits blast radius. |
+| User Ctrl-C's `cc-crew up` | SIGINT handler | Stop polling; `docker kill` all in-flight task containers; for each killed task remove `claude-processing`/`claude-reviewing` and delete its lock ref + timestamp tag (work re-appears on the next orchestrator start); wait for container exits; exit 0. |
+| Host disk fills (worktrees accumulate) | Worktree create fails | Surface error, release lock, queue label intact for retry; operator runs `git worktree prune` or `cc-crew reset`. |
+| PR force-pushed mid-review | Reviewer reads stale diff | Review posts against old lines; re-label `claude-review` to retrigger. |
+| Issue re-labeled after completion | Reclaim's "already-done" check returns true | Leave branch; next tick sees `claude-done` and skips. |
+| State wedged (orphaned locks, manual mis-labels) | User observes | `cc-crew reset` (§7.3) drops all cc-crew state and requeues every open issue/PR that had one. |
 
 ## 12. Implementation order
 
@@ -376,10 +411,10 @@ Incremental so each step is runnable and testable:
 5. `internal/docker` — `docker run` / `ps` / `kill` wrappers with context-cancel semantics.
 6. `internal/scheduler` — tick loop + per-persona semaphores; wire 1–5 together.
 7. `internal/config` — flag/env parsing.
-8. `cmd/cc-crew/main.go` — `up` and `status` subcommands.
+8. `cmd/cc-crew/main.go` — `up`, `status`, and `reset` subcommands.
 9. `scripts/cc-crew-run` — in-container entrypoint; add to `Dockerfile`.
 10. `personas/implementer/` — CLAUDE.md + settings.json.
-11. End-to-end: open a labeled issue in a scratch repo, observe claim → branch → PR → label transition. Then label the PR `claude-review`, observe review post.
+11. End-to-end: open a labeled issue in a scratch repo, observe claim → branch → PR → label transition. Then label the PR `claude-review`, observe review post. Then run `cc-crew reset --yes` against the scratch repo and confirm all cc-crew refs are gone and labels are restored.
 
 ## 13. Migration from cc-masque
 
