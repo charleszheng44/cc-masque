@@ -1,0 +1,58 @@
+#!/bin/bash
+# cc-crew-run — in-container entrypoint for implementer and reviewer tasks.
+# Reads role/config from env, prepares the environment, and execs `claude -p`.
+# The per-persona CLAUDE.md (mounted to /root/.claude/CLAUDE.md) tells
+# Claude to perform the role-specific finisher (git push + gh pr create
+# for implementer; gh pr review for reviewer). This script only sets up.
+
+set -euo pipefail
+
+: "${CC_ROLE:?CC_ROLE must be set}"
+: "${CC_MODEL:=claude-sonnet-4-6}"
+: "${CC_MAX_TURNS:=15}"
+
+if [[ -n "${GIT_AUTHOR_NAME:-}" ]]; then
+  export GIT_COMMITTER_NAME="${GIT_COMMITTER_NAME:-$GIT_AUTHOR_NAME}"
+fi
+if [[ -n "${GIT_AUTHOR_EMAIL:-}" ]]; then
+  export GIT_COMMITTER_EMAIL="${GIT_COMMITTER_EMAIL:-$GIT_AUTHOR_EMAIL}"
+fi
+git config --global user.name  "${GIT_AUTHOR_NAME:-cc-crew-bot}"
+git config --global user.email "${GIT_AUTHOR_EMAIL:-cc-crew-bot@example.com}"
+
+gh auth setup-git
+
+cd /workspace
+
+case "$CC_ROLE" in
+  implementer)
+    : "${CC_ISSUE_NUM:?CC_ISSUE_NUM required}"
+    : "${CC_BASE_BRANCH:?CC_BASE_BRANCH required}"
+    gh issue view "$CC_ISSUE_NUM" -R "$CC_REPO" --json number,title,body \
+      -q '"# Issue #\(.number): \(.title)\n\n\(.body)"' > /tmp/issue.md
+
+    PROMPT="You are the cc-crew implementer. Read /tmp/issue.md and implement the change in the current worktree (branch: claude/issue-${CC_ISSUE_NUM}). Base branch: ${CC_BASE_BRANCH}. Follow your CLAUDE.md instructions exactly."
+
+    exec claude -p "$PROMPT" \
+      --model "$CC_MODEL" \
+      --max-turns "$CC_MAX_TURNS" \
+      --dangerously-skip-permissions
+    ;;
+  reviewer)
+    : "${CC_PR_NUM:?CC_PR_NUM required}"
+    gh pr checkout "$CC_PR_NUM" -R "$CC_REPO"
+    gh pr view "$CC_PR_NUM" -R "$CC_REPO" --json number,title,body,baseRefName \
+      -q '"# PR #\(.number): \(.title)\n\nBase: \(.baseRefName)\n\n\(.body)"' > /tmp/pr.md
+
+    PROMPT="You are the cc-crew reviewer. Read /tmp/pr.md and review PR #${CC_PR_NUM}. Follow your CLAUDE.md reviewer persona instructions exactly. Post exactly one review via gh pr review."
+
+    exec claude -p "$PROMPT" \
+      --model "$CC_MODEL" \
+      --max-turns "$CC_MAX_TURNS" \
+      --permission-mode plan
+    ;;
+  *)
+    echo "unknown CC_ROLE: $CC_ROLE" >&2
+    exit 64
+    ;;
+esac
