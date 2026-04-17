@@ -89,11 +89,11 @@ func Execute(ctx context.Context, o Options, p Plan, out io.Writer) error {
 			return err
 		}
 	}
+	issues, err := o.GH.ListIssues(ctx, o.Repo, nil, nil)
+	if err != nil {
+		return err
+	}
 	for _, n := range p.ImplementerIssues {
-		issues, err := o.GH.ListIssues(ctx, o.Repo, nil, nil)
-		if err != nil {
-			return err
-		}
 		if !isOpenIssue(issues, n) {
 			continue
 		}
@@ -101,11 +101,11 @@ func Execute(ctx context.Context, o Options, p Plan, out io.Writer) error {
 		_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.ProcessingLabel)
 		_ = o.GH.AddLabel(ctx, o.Repo, n, o.TaskLabel)
 	}
+	prs, err := o.GH.ListPRs(ctx, o.Repo, nil, nil)
+	if err != nil {
+		return err
+	}
 	for _, n := range p.ReviewerPRs {
-		prs, err := o.GH.ListPRs(ctx, o.Repo, nil, nil)
-		if err != nil {
-			return err
-		}
 		if !isOpenPR(prs, n) {
 			continue
 		}
