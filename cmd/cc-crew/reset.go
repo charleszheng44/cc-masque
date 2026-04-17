@@ -45,8 +45,10 @@ func runReset(args []string) int {
 		Repo:            github.Repo{Owner: owner, Name: name},
 		TaskLabel:       firstNonEmpty(os.Getenv("CC_TASK_LABEL"), defaults.TaskLabel),
 		ProcessingLabel: firstNonEmpty(os.Getenv("CC_PROCESSING_LABEL"), defaults.ProcessingLabel),
+		DoneLabel:       firstNonEmpty(os.Getenv("CC_DONE_LABEL"), defaults.DoneLabel),
 		ReviewLabel:     firstNonEmpty(os.Getenv("CC_REVIEW_LABEL"), defaults.ReviewLabel),
 		ReviewingLabel:  firstNonEmpty(os.Getenv("CC_REVIEWING_LABEL"), defaults.ReviewingLabel),
+		ReviewedLabel:   firstNonEmpty(os.Getenv("CC_REVIEWED_LABEL"), defaults.ReviewedLabel),
 	}
 	plan, err := reset.Compute(ctx, o)
 	if err != nil {

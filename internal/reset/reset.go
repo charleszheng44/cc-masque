@@ -35,8 +35,10 @@ type Options struct {
 	Repo            github.Repo
 	TaskLabel       string
 	ProcessingLabel string
+	DoneLabel       string
 	ReviewLabel     string
 	ReviewingLabel  string
+	ReviewedLabel   string
 }
 
 // Compute builds a Plan without making any changes.
@@ -61,6 +63,38 @@ func Compute(ctx context.Context, o Options) (Plan, error) {
 			}
 		}
 	}
+	// Also pick up issues/PRs whose cc-crew labels (processing or done) were
+	// left behind without a corresponding ref — partial cleanup, manual ref
+	// deletion, etc. Without this reset can't clean the orphaned label.
+	for _, label := range []string{o.ProcessingLabel, o.DoneLabel} {
+		if label == "" {
+			continue
+		}
+		orphans, err := o.GH.ListIssues(ctx, o.Repo, []string{label}, nil)
+		if err != nil {
+			return p, err
+		}
+		for _, is := range orphans {
+			if !containsInt(p.ImplementerIssues, is.Number) {
+				p.ImplementerIssues = append(p.ImplementerIssues, is.Number)
+			}
+		}
+	}
+	for _, label := range []string{o.ReviewingLabel, o.ReviewedLabel} {
+		if label == "" {
+			continue
+		}
+		orphans, err := o.GH.ListPRs(ctx, o.Repo, []string{label}, nil)
+		if err != nil {
+			return p, err
+		}
+		for _, pr := range orphans {
+			if !containsInt(p.ReviewerPRs, pr.Number) {
+				p.ReviewerPRs = append(p.ReviewerPRs, pr.Number)
+			}
+		}
+	}
+
 	entries, err := o.Docker.PS(ctx, map[string]string{"cc-crew.repo": o.Repo.String()})
 	if err != nil {
 		return p, err
@@ -74,6 +108,15 @@ func Compute(ctx context.Context, o Options) (Plan, error) {
 	}
 	p.Worktrees = wts
 	return p, nil
+}
+
+func containsInt(xs []int, v int) bool {
+	for _, x := range xs {
+		if x == v {
+			return true
+		}
+	}
+	return false
 }
 
 // Execute applies a Plan. Writes a short progress log to `out`.
@@ -100,6 +143,9 @@ func Execute(ctx context.Context, o Options, p Plan, out io.Writer) error {
 		}
 		fmt.Fprintf(out, "requeue issue #%d\n", n)
 		_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.ProcessingLabel)
+		if o.DoneLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.DoneLabel)
+		}
 		_ = o.GH.AddLabel(ctx, o.Repo, n, o.TaskLabel)
 	}
 	prs, err := o.GH.ListPRs(ctx, o.Repo, nil, nil)
@@ -112,6 +158,9 @@ func Execute(ctx context.Context, o Options, p Plan, out io.Writer) error {
 		}
 		fmt.Fprintf(out, "requeue PR #%d\n", n)
 		_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.ReviewingLabel)
+		if o.ReviewedLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.ReviewedLabel)
+		}
 		_ = o.GH.AddLabel(ctx, o.Repo, n, o.ReviewLabel)
 	}
 	for _, wt := range p.Worktrees {
