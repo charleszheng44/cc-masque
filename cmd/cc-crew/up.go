@@ -170,6 +170,39 @@ func runUp(args []string) int {
 		}(e.Name)
 	}
 	wg.Wait()
+
+	// Best-effort: release labels/claims so the next orchestrator start can
+	// immediately retry rather than waiting for reclaim.
+	for _, e := range entries {
+		role := e.Labels["cc-crew.role"]
+		switch role {
+		case "implementer":
+			issueStr := e.Labels["cc-crew.issue"]
+			var n int
+			if _, err := fmt.Sscan(issueStr, &n); err != nil || n == 0 {
+				continue
+			}
+			if err := ghc.RemoveLabel(shutCtx, repo, n, c.ProcessingLabel); err != nil {
+				log.Warn("sigint cleanup: remove processing label", "issue", n, "err", err)
+			}
+			if err := claimer.Release(shutCtx, claim.KindImplementer, n, true); err != nil {
+				log.Warn("sigint cleanup: release implementer claim", "issue", n, "err", err)
+			}
+		case "reviewer":
+			prStr := e.Labels["cc-crew.pr"]
+			var n int
+			if _, err := fmt.Sscan(prStr, &n); err != nil || n == 0 {
+				continue
+			}
+			if err := ghc.RemoveLabel(shutCtx, repo, n, c.ReviewingLabel); err != nil {
+				log.Warn("sigint cleanup: remove reviewing label", "pr", n, "err", err)
+			}
+			if err := claimer.Release(shutCtx, claim.KindReviewer, n, true); err != nil {
+				log.Warn("sigint cleanup: release reviewer claim", "pr", n, "err", err)
+			}
+		}
+	}
+
 	log.Info("bye")
 	return 0
 }

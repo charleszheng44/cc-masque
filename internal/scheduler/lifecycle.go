@@ -122,9 +122,11 @@ func (l *Lifecycle) buildRunSpec(number int, wtPath string) docker.RunSpec {
 		Mounts: []docker.Mount{
 			{HostPath: wtPath, ContainerPath: "/workspace"},
 			{
+				// Mount .git read-write so that commit operations inside the
+				// worktree can write to the shared .git/objects and per-worktree
+				// admin files (COMMIT_EDITMSG, index, etc.).
 				HostPath:      filepath.Join(l.WT.RepoDir, ".git"),
 				ContainerPath: filepath.Join(l.WT.RepoDir, ".git"),
-				ReadOnly:      true,
 			},
 		},
 	}
