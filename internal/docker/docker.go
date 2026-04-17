@@ -66,12 +66,17 @@ func BuildRunArgs(s RunSpec) []string {
 }
 
 // Run blocks until the container exits. Returns the exit code (0 on success).
-// A context deadline causes docker kill via signal and a non-zero exit.
+// If the context is cancelled or times out, ctx.Err() is returned as the error
+// so callers can distinguish cancellation from a genuine container failure.
 func (r *Runner) Run(ctx context.Context, s RunSpec) (int, error) {
 	cmd := exec.CommandContext(ctx, r.Bin, BuildRunArgs(s)...)
 	cmd.Stdout = s.Stdout
 	cmd.Stderr = s.Stderr
 	err := cmd.Run()
+	if ctx.Err() != nil {
+		// Context canceled (timeout or caller cancellation).
+		return -1, ctx.Err()
+	}
 	if err == nil {
 		return 0, nil
 	}

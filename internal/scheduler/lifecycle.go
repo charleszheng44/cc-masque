@@ -87,7 +87,7 @@ func (l *Lifecycle) Dispatch(ctx context.Context, number int) {
 
 	code, err := l.Docker.Run(runCtx, spec)
 	if err != nil {
-		log.Error("docker run error", "err", err)
+		log.Warn("task timed out or cancelled", "err", err)
 		l.failCleanup(ctx, number)
 		l.removeWorktree(ctx, number)
 		return
