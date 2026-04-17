@@ -7,16 +7,19 @@ import (
 	"fmt"
 	"os/exec"
 	"strings"
+	"time"
 )
+
+// compile-time assertion: *ghClient must satisfy Client.
+var _ Client = (*ghClient)(nil)
 
 type ghClient struct {
 	ghBin string // defaults to "gh" via PATH
 }
 
-// NewGhClient returns a gh-backed client. Methods are added incrementally
-// across Tasks 1.3–1.6; once Task 1.6 is complete, *ghClient satisfies
-// github.Client. Callers that need the interface should convert at that point.
-func NewGhClient() *ghClient { return &ghClient{ghBin: "gh"} }
+// NewGhClient returns a Client backed by the `gh` CLI and GitHub REST API.
+// The caller must ensure `gh` is installed and authenticated (gh auth status).
+func NewGhClient() Client { return &ghClient{ghBin: "gh"} }
 
 // runGh runs `gh <args>` and returns stdout. Non-zero exit is an error
 // whose message includes stderr for debugging.
@@ -46,8 +49,6 @@ func (c *ghClient) DefaultBranch(ctx context.Context, r Repo) (string, error) {
 	}
 	return strings.TrimSpace(string(out)), nil
 }
-
-// remaining methods (ListReviews) are implemented in Task 1.6.
 
 type ghRefObj struct {
 	SHA string `json:"sha"`
@@ -251,6 +252,32 @@ func (c *ghClient) AddLabel(ctx context.Context, r Repo, n int, label string) er
 func (c *ghClient) RemoveLabel(ctx context.Context, r Repo, n int, label string) error {
 	_, err := c.runGh(ctx, "issue", "edit", fmt.Sprint(n), "-R", r.String(), "--remove-label", label)
 	return err
+}
+
+type ghReview struct {
+	User struct {
+		Login string `json:"login"`
+	} `json:"user"`
+	State       string `json:"state"`        // APPROVED, COMMENTED, ...
+	SubmittedAt string `json:"submitted_at"` // RFC3339
+}
+
+func (c *ghClient) ListReviews(ctx context.Context, r Repo, pr int) ([]Review, error) {
+	out, err := c.runGh(ctx, "api",
+		fmt.Sprintf("repos/%s/pulls/%d/reviews", r.String(), pr))
+	if err != nil {
+		return nil, err
+	}
+	var raw []ghReview
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, err
+	}
+	reviews := make([]Review, 0, len(raw))
+	for _, g := range raw {
+		t, _ := time.Parse(time.RFC3339, g.SubmittedAt)
+		reviews = append(reviews, Review{Author: g.User.Login, State: g.State, At: t})
+	}
+	return reviews, nil
 }
 
 // (helper used by tests to override the binary)

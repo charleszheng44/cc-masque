@@ -134,3 +134,18 @@ exit 1
 		t.Fatalf("404 should be idempotent success: %v", err)
 	}
 }
+
+func TestListReviewsParses(t *testing.T) {
+	body := `[{"user":{"login":"reviewer-bot"},"state":"COMMENTED","submitted_at":"2026-04-17T12:00:00Z"}]`
+	bin := fakeBin(t, `cat <<'EOF'
+`+body+`
+EOF`)
+	c := newGhClientWithBin(bin)
+	got, err := c.ListReviews(context.Background(), Repo{Owner: "a", Name: "b"}, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].Author != "reviewer-bot" || got[0].State != "COMMENTED" {
+		t.Fatalf("got %+v", got)
+	}
+}
