@@ -66,12 +66,10 @@ func (c *ghClient) CreateRef(ctx context.Context, r Repo, ref, sha string) error
 		fmt.Sprintf("repos/%s/git/refs", r.String()),
 		"--input", "-")
 	cmd.Stdin = strings.NewReader(body)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
+	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		if strings.Contains(stderr.String(), "Reference already exists") ||
-			strings.Contains(stderr.String(), "422") {
+		if strings.Contains(stderr.String(), "Reference already exists") {
 			return ErrRefExists
 		}
 		return fmt.Errorf("gh api create ref %s: %w\nstderr: %s", ref, err, stderr.String())
@@ -79,16 +77,15 @@ func (c *ghClient) CreateRef(ctx context.Context, r Repo, ref, sha string) error
 	return nil
 }
 
-// DeleteRef is idempotent — 404 / 422 "does not exist" is treated as success.
+// DeleteRef is idempotent — "Reference does not exist" / "Not Found" is treated as success.
 func (c *ghClient) DeleteRef(ctx context.Context, r Repo, ref string) error {
 	trim := strings.TrimPrefix(ref, "refs/")
 	_, err := c.runGh(ctx, "api", "-X", "DELETE",
 		fmt.Sprintf("repos/%s/git/refs/%s", r.String(), trim))
 	if err != nil {
-		// Treat 422/404 already-deleted as success.
-		if strings.Contains(err.Error(), "Reference does not exist") ||
-			strings.Contains(err.Error(), "404") ||
-			strings.Contains(err.Error(), "422") {
+		msg := err.Error()
+		if strings.Contains(msg, "Reference does not exist") ||
+			strings.Contains(msg, "Not Found") {
 			return nil
 		}
 		return err

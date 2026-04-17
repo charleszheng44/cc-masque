@@ -92,3 +92,45 @@ exit 1
 		t.Fatalf("should be nil: %v", err)
 	}
 }
+
+func TestCreateRefDoesNotMapOtherErrorsToErrRefExists(t *testing.T) {
+	// Unrelated 422 (bad SHA) must NOT be mapped to ErrRefExists.
+	bin := fakeBin(t, `echo "HTTP 422: Object does not exist" 1>&2
+exit 1
+`)
+	c := newGhClientWithBin(bin)
+	err := c.CreateRef(context.Background(), Repo{Owner: "a", Name: "b"},
+		"refs/heads/claude/issue-42", "badsha")
+	if err == nil {
+		t.Fatal("expected an error for bad SHA")
+	}
+	if err == ErrRefExists {
+		t.Fatalf("must NOT map unrelated 422 to ErrRefExists: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Object does not exist") {
+		t.Fatalf("error should propagate original stderr: %v", err)
+	}
+}
+
+func TestDeleteRefDoesNotMapUnrelatedErrorsToSuccess(t *testing.T) {
+	// A 422 for a different reason must not become nil.
+	bin := fakeBin(t, `echo "HTTP 422: Protected branch" 1>&2
+exit 1
+`)
+	c := newGhClientWithBin(bin)
+	if err := c.DeleteRef(context.Background(), Repo{Owner: "a", Name: "b"},
+		"refs/heads/protected"); err == nil {
+		t.Fatal("expected error for protected branch, got nil")
+	}
+}
+
+func TestDeleteRefTreatsNotFoundAsSuccess(t *testing.T) {
+	bin := fakeBin(t, `echo "HTTP 404: Not Found" 1>&2
+exit 1
+`)
+	c := newGhClientWithBin(bin)
+	if err := c.DeleteRef(context.Background(), Repo{Owner: "a", Name: "b"},
+		"refs/heads/ghost"); err != nil {
+		t.Fatalf("404 should be idempotent success: %v", err)
+	}
+}
