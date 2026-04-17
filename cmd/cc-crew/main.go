@@ -16,8 +16,7 @@ func main() {
 	case "version", "-v", "--version":
 		fmt.Println(Version)
 	case "up":
-		fmt.Fprintln(os.Stderr, "up: not implemented yet")
-		os.Exit(1)
+		os.Exit(runUp(os.Args[2:]))
 	case "status":
 		fmt.Fprintln(os.Stderr, "status: not implemented yet")
 		os.Exit(1)
