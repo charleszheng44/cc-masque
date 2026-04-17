@@ -32,6 +32,8 @@ func Parse(flags []string, getenv func(string) string, pwd string) (Config, erro
 	fs.StringVar(&c.ReviewLabel, "review-label", orDefault(getenv("CC_REVIEW_LABEL"), c.ReviewLabel), "Queue label for reviewer")
 	fs.BoolVar(&c.AutoReview, "auto-review", envBool(getenv, "CC_AUTO_REVIEW", c.AutoReview), "Auto-apply review-label to implementer PRs")
 	fs.StringVar(&c.BaseBranch, "base-branch", orDefault(getenv("CC_BASE_BRANCH"), ""), "Base branch (default: GitHub's default branch)")
+	fs.IntVar(&c.ImplMaxTurns, "impl-max-turns", envInt(getenv, "CC_IMPL_MAX_TURNS", c.ImplMaxTurns), "Max Claude turns per implementer task")
+	fs.IntVar(&c.ReviewMaxTurns, "review-max-turns", envInt(getenv, "CC_REVIEW_MAX_TURNS", c.ReviewMaxTurns), "Max Claude turns per reviewer task")
 	fs.StringVar(&c.Image, "image", orDefault(getenv("CC_IMAGE"), c.Image), "Task container image")
 	fs.StringVar(&c.Model, "model", orDefault(getenv("CC_MODEL"), c.Model), "Claude model")
 

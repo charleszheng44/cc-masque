@@ -25,6 +25,9 @@ type Config struct {
 
 	AutoReview bool
 
+	ImplMaxTurns   int
+	ReviewMaxTurns int
+
 	Image string
 	Model string
 
@@ -56,6 +59,10 @@ func Defaults() Config {
 		ReviewLabel:     "claude-review",
 		ReviewingLabel:  "claude-reviewing",
 		ReviewedLabel:   "claude-reviewed",
+
+		// 0 = unlimited; only enforced when the user explicitly sets a cap.
+		ImplMaxTurns:   0,
+		ReviewMaxTurns: 0,
 
 		Image: "ghcr.io/charleszheng44/cc-crew:latest",
 		Model: "claude-sonnet-4-6",
