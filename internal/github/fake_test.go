@@ -35,3 +35,44 @@ func TestFakeListIssuesLabelFiltering(t *testing.T) {
 		t.Fatalf("expected issue 1 only, got %+v", got)
 	}
 }
+
+func TestFakeConcurrentReadsDoNotObserveTornLabels(t *testing.T) {
+	c := NewFake()
+	r := Repo{Owner: "acme", Name: "widget"}
+	c.Issues[1] = &Issue{Number: 1, State: "open", Labels: []string{"a", "b", "c", "d"}}
+
+	done := make(chan struct{})
+	// Mutator: repeatedly add and remove a label.
+	go func() {
+		defer close(done)
+		for i := 0; i < 1000; i++ {
+			_ = c.AddLabel(context.Background(), r, 1, "x")
+			_ = c.RemoveLabel(context.Background(), r, 1, "x")
+		}
+	}()
+	// Reader: repeatedly snapshot and inspect labels.
+	for i := 0; i < 1000; i++ {
+		issues, err := c.ListIssues(context.Background(), r, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(issues) != 1 {
+			t.Fatalf("expected 1 issue, got %d", len(issues))
+		}
+		// The snapshot must always contain at least a,b,c,d
+		// regardless of the mutator's in-flight state.
+		for _, want := range []string{"a", "b", "c", "d"} {
+			found := false
+			for _, got := range issues[0].Labels {
+				if got == want {
+					found = true
+					break
+				}
+			}
+			if !found {
+				t.Fatalf("snapshot missing baseline label %q: %v", want, issues[0].Labels)
+			}
+		}
+	}
+	<-done
+}

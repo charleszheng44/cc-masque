@@ -33,10 +33,14 @@ func NewFake() *FakeClient {
 }
 
 func (f *FakeClient) CurrentUser(ctx context.Context) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.User, nil
 }
 
 func (f *FakeClient) DefaultBranch(ctx context.Context, r Repo) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.DefaultBr, nil
 }
 
@@ -81,7 +85,9 @@ func (f *FakeClient) ListIssues(ctx context.Context, r Repo, with, without []str
 		if hasAny(i.Labels, without) {
 			continue
 		}
-		out = append(out, *i)
+		cp := *i
+		cp.Labels = append([]string(nil), i.Labels...)
+		out = append(out, cp)
 	}
 	return out, nil
 }
@@ -100,7 +106,9 @@ func (f *FakeClient) ListPRs(ctx context.Context, r Repo, with, without []string
 		if hasAny(p.Labels, without) {
 			continue
 		}
-		out = append(out, *p)
+		cp := *p
+		cp.Labels = append([]string(nil), p.Labels...)
+		out = append(out, cp)
 	}
 	return out, nil
 }
@@ -112,11 +120,13 @@ func (f *FakeClient) GetPR(ctx context.Context, r Repo, n int) (PullRequest, err
 	if !ok {
 		return PullRequest{}, fmt.Errorf("fake: PR %d not found", n)
 	}
-	return *p, nil
+	cp := *p
+	cp.Labels = append([]string(nil), p.Labels...)
+	return cp, nil
 }
 
 func removeStr(s []string, v string) []string {
-	out := s[:0]
+	out := make([]string, 0, len(s))
 	for _, x := range s {
 		if x != v {
 			out = append(out, x)
