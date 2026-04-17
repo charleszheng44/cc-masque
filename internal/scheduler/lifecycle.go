@@ -60,7 +60,25 @@ func (l *Lifecycle) Dispatch(ctx context.Context, number int) {
 		}
 		wtPath = p
 	} else {
-		wtPath = filepath.Join(l.WT.RepoDir, ".claude-worktrees", fmt.Sprintf("review-%d", number))
+		pr, err := l.GH.GetPR(ctx, l.Repo, number)
+		if err != nil {
+			log.Error("get PR failed", "err", err)
+			l.failCleanup(ctx, number)
+			return
+		}
+		headSha := pr.HeadRefOid
+		if headSha == "" {
+			log.Error("PR head SHA is empty", "pr", number)
+			l.failCleanup(ctx, number)
+			return
+		}
+		p, err := l.WT.AddDetached(ctx, fmt.Sprintf("review-%d", number), headSha)
+		if err != nil {
+			log.Error("worktree add detached failed", "err", err)
+			l.failCleanup(ctx, number)
+			return
+		}
+		wtPath = p
 	}
 
 	spec := l.buildRunSpec(number, wtPath)

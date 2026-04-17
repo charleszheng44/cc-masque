@@ -40,7 +40,8 @@ case "$CC_ROLE" in
     ;;
   reviewer)
     : "${CC_PR_NUM:?CC_PR_NUM required}"
-    gh pr checkout "$CC_PR_NUM" -R "$CC_REPO"
+    # The worktree is already checked out at the PR head SHA by the host
+    # orchestrator; no `gh pr checkout` needed here.
     gh pr view "$CC_PR_NUM" -R "$CC_REPO" --json number,title,body,baseRefName \
       -q '"# PR #\(.number): \(.title)\n\nBase: \(.baseRefName)\n\n\(.body)"' > /tmp/pr.md
 

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -48,6 +49,39 @@ func makeRepo(t *testing.T) string {
 	mustRun(t, root, "git", "clone", origin, clone)
 	mustRun(t, clone, "git", "fetch", "origin")
 	return clone
+}
+
+func TestAddDetached(t *testing.T) {
+	clone := makeRepo(t)
+	m := New(clone)
+	ctx := context.Background()
+
+	// Get the SHA of claude/issue-42 tip from origin.
+	cmd := exec.Command("git", "rev-parse", "origin/claude/issue-42")
+	cmd.Dir = clone
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("rev-parse: %v", err)
+	}
+	sha := strings.TrimSpace(string(out))
+
+	p, err := m.AddDetached(ctx, "review-42", sha)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("worktree path not created: %v", err)
+	}
+	// HEAD should be detached at the given SHA.
+	headCmd := exec.Command("git", "rev-parse", "HEAD")
+	headCmd.Dir = p
+	headOut, err := headCmd.Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	if got := strings.TrimSpace(string(headOut)); got != sha {
+		t.Fatalf("HEAD = %s, want %s", got, sha)
+	}
 }
 
 func TestAddRemove(t *testing.T) {

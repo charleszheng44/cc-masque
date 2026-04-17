@@ -50,6 +50,25 @@ func (m *Manager) Add(ctx context.Context, branch string) (string, error) {
 	return p, nil
 }
 
+// AddDetached creates a detached worktree at .claude-worktrees/<name> checked
+// out at the given SHA.  If the SHA is not present locally, a bare
+// `git fetch origin` is attempted first.  Idempotent: any existing worktree at
+// the same path is removed before re-adding.
+func (m *Manager) AddDetached(ctx context.Context, name, sha string) (string, error) {
+	p := filepath.Join(m.RepoDir, ".claude-worktrees", name)
+	// Ensure the object is available locally.
+	if _, err := m.git(ctx, "cat-file", "-e", sha+"^{commit}"); err != nil {
+		if _, ferr := m.git(ctx, "fetch", "origin"); ferr != nil {
+			return "", fmt.Errorf("fetch origin: %w", ferr)
+		}
+	}
+	_, _ = m.git(ctx, "worktree", "remove", "--force", p)
+	if _, err := m.git(ctx, "worktree", "add", "--force", "--detach", p, sha); err != nil {
+		return "", err
+	}
+	return p, nil
+}
+
 func (m *Manager) Remove(ctx context.Context, branch string) error {
 	_, err := m.git(ctx, "worktree", "remove", "--force", m.Path(branch))
 	return err
