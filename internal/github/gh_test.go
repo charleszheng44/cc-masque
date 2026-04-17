@@ -68,3 +68,27 @@ EOF`)
 		t.Fatalf("want [1], got %+v", got)
 	}
 }
+
+func TestCreateRefDetects422AsErrRefExists(t *testing.T) {
+	// Fake gh writes "HTTP 422: Reference already exists" to stderr and exits 1.
+	bin := fakeBin(t, `echo "HTTP 422: Reference already exists" 1>&2
+exit 1
+`)
+	c := newGhClientWithBin(bin)
+	err := c.CreateRef(context.Background(), Repo{Owner: "a", Name: "b"},
+		"refs/heads/claude/issue-42", "deadbeef")
+	if err != ErrRefExists {
+		t.Fatalf("want ErrRefExists, got %v", err)
+	}
+}
+
+func TestDeleteRefTreatsAlreadyDeletedAsSuccess(t *testing.T) {
+	bin := fakeBin(t, `echo "HTTP 422: Reference does not exist" 1>&2
+exit 1
+`)
+	c := newGhClientWithBin(bin)
+	if err := c.DeleteRef(context.Background(), Repo{Owner: "a", Name: "b"},
+		"refs/heads/claude/issue-42"); err != nil {
+		t.Fatalf("should be nil: %v", err)
+	}
+}

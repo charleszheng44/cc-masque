@@ -47,8 +47,87 @@ func (c *ghClient) DefaultBranch(ctx context.Context, r Repo) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
-// remaining methods (CreateRef, DeleteRef, ListMatchingRefs, GetRef,
-// ListReviews) are implemented in Tasks 1.5–1.6.
+// remaining methods (ListReviews) are implemented in Task 1.6.
+
+type ghRefObj struct {
+	SHA string `json:"sha"`
+}
+type ghRef struct {
+	Ref    string   `json:"ref"`
+	Object ghRefObj `json:"object"`
+}
+
+// CreateRef posts to /repos/<r>/git/refs with a JSON body. If GitHub
+// returns 422 with "Reference already exists", we map that to ErrRefExists
+// so callers can detect a lost atomic-claim race.
+func (c *ghClient) CreateRef(ctx context.Context, r Repo, ref, sha string) error {
+	body := fmt.Sprintf(`{"ref":%q,"sha":%q}`, ref, sha)
+	cmd := exec.CommandContext(ctx, c.ghBin, "api", "-X", "POST",
+		fmt.Sprintf("repos/%s/git/refs", r.String()),
+		"--input", "-")
+	cmd.Stdin = strings.NewReader(body)
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if strings.Contains(stderr.String(), "Reference already exists") ||
+			strings.Contains(stderr.String(), "422") {
+			return ErrRefExists
+		}
+		return fmt.Errorf("gh api create ref %s: %w\nstderr: %s", ref, err, stderr.String())
+	}
+	return nil
+}
+
+// DeleteRef is idempotent — 404 / 422 "does not exist" is treated as success.
+func (c *ghClient) DeleteRef(ctx context.Context, r Repo, ref string) error {
+	trim := strings.TrimPrefix(ref, "refs/")
+	_, err := c.runGh(ctx, "api", "-X", "DELETE",
+		fmt.Sprintf("repos/%s/git/refs/%s", r.String(), trim))
+	if err != nil {
+		// Treat 422/404 already-deleted as success.
+		if strings.Contains(err.Error(), "Reference does not exist") ||
+			strings.Contains(err.Error(), "404") ||
+			strings.Contains(err.Error(), "422") {
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+func (c *ghClient) ListMatchingRefs(ctx context.Context, r Repo, prefix string) ([]Ref, error) {
+	// GET /repos/{owner}/{repo}/git/matching-refs/<prefix>
+	// Callers pass the prefix WITHOUT the leading "refs/" (GitHub's convention).
+	out, err := c.runGh(ctx, "api",
+		fmt.Sprintf("repos/%s/git/matching-refs/%s", r.String(), prefix))
+	if err != nil {
+		return nil, err
+	}
+	var raw []ghRef
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parse matching-refs: %w", err)
+	}
+	refs := make([]Ref, 0, len(raw))
+	for _, g := range raw {
+		refs = append(refs, Ref{Name: g.Ref, SHA: g.Object.SHA})
+	}
+	return refs, nil
+}
+
+func (c *ghClient) GetRef(ctx context.Context, r Repo, ref string) (Ref, error) {
+	trim := strings.TrimPrefix(ref, "refs/")
+	out, err := c.runGh(ctx, "api",
+		fmt.Sprintf("repos/%s/git/ref/%s", r.String(), trim))
+	if err != nil {
+		return Ref{}, err
+	}
+	var g ghRef
+	if err := json.Unmarshal(out, &g); err != nil {
+		return Ref{}, err
+	}
+	return Ref{Name: g.Ref, SHA: g.Object.SHA}, nil
+}
 
 // ghIssue/ghPR are JSON shapes returned by `gh issue list --json ...`.
 // We translate from gh's label-array-of-objects to our flat []string.
