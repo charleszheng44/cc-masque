@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"testing"
@@ -111,4 +112,84 @@ func keys(m map[string]string) []string {
 		out = append(out, k)
 	}
 	return out
+}
+
+func TestAddresserSuccessWritesAddressedMarkers(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[55] = &github.PullRequest{
+		Number: 55, State: "open", HeadRefName: "claude/issue-55",
+		HeadRefOid: "sha-5", Labels: []string{"claude-address", "claude-addressing"},
+	}
+	f.Refs["refs/tags/address-lock/pr-55"] = "sha-5"
+	f.Refs["refs/tags/address-claim/pr-55/20260417T130000Z"] = "sha-5"
+
+	l := &Lifecycle{
+		Kind: claim.KindAddresser, Claimer: claim.New(f, repo), GH: f, Repo: repo,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-address",
+		LockLabel:  "claude-addressing",
+		DoneLabel:  "claude-addressed",
+	}
+	l.successCleanupAddresser(context.Background(), 55, []int{901, 902})
+
+	for _, id := range []int{901, 902} {
+		ref := fmt.Sprintf("refs/tags/cc-crew-addressed/pr-55/%d", id)
+		if _, ok := f.Refs[ref]; !ok {
+			t.Fatalf("marker %s missing; refs = %v", ref, keys(f.Refs))
+		}
+	}
+	if _, ok := f.Refs["refs/tags/address-lock/pr-55"]; ok {
+		t.Fatal("address-lock not released")
+	}
+	if _, ok := f.Refs["refs/tags/address-claim/pr-55/20260417T130000Z"]; ok {
+		t.Fatal("address-claim ts not released")
+	}
+	lbls := f.PRs[55].Labels
+	if containsLabel(lbls, "claude-address") || containsLabel(lbls, "claude-addressing") {
+		t.Fatalf("queue/lock labels not removed: %v", lbls)
+	}
+	if !containsLabel(lbls, "claude-addressed") {
+		t.Fatalf("claude-addressed not added: %v", lbls)
+	}
+}
+
+func TestAddresserFailLeavesQueueLabel(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[56] = &github.PullRequest{
+		Number: 56, State: "open", HeadRefName: "claude/issue-56",
+		HeadRefOid: "sha-6", Labels: []string{"claude-address", "claude-addressing"},
+	}
+	f.Refs["refs/tags/address-lock/pr-56"] = "sha-6"
+	f.Refs["refs/tags/address-claim/pr-56/20260417T130000Z"] = "sha-6"
+
+	l := &Lifecycle{
+		Kind: claim.KindAddresser, Claimer: claim.New(f, repo), GH: f, Repo: repo,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-address",
+		LockLabel:  "claude-addressing",
+		DoneLabel:  "claude-addressed",
+	}
+	l.failCleanup(context.Background(), 56)
+
+	if _, ok := f.Refs["refs/tags/address-lock/pr-56"]; ok {
+		t.Fatal("address-lock not released on fail")
+	}
+	lbls := f.PRs[56].Labels
+	if containsLabel(lbls, "claude-addressing") {
+		t.Fatalf("addressing label still present: %v", lbls)
+	}
+	if !containsLabel(lbls, "claude-address") {
+		t.Fatalf("queue label (claude-address) should remain for retry: %v", lbls)
+	}
+}
+
+func containsLabel(ss []string, v string) bool {
+	for _, s := range ss {
+		if s == v {
+			return true
+		}
+	}
+	return false
 }
