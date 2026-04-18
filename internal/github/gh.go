@@ -258,6 +258,7 @@ func (c *ghClient) RemoveLabel(ctx context.Context, r Repo, n int, label string)
 }
 
 type ghReview struct {
+	ID   int `json:"id"`
 	User struct {
 		Login string `json:"login"`
 	} `json:"user"`
@@ -278,7 +279,7 @@ func (c *ghClient) ListReviews(ctx context.Context, r Repo, pr int) ([]Review, e
 	reviews := make([]Review, 0, len(raw))
 	for _, g := range raw {
 		t, _ := time.Parse(time.RFC3339, g.SubmittedAt)
-		reviews = append(reviews, Review{Author: g.User.Login, State: g.State, At: t})
+		reviews = append(reviews, Review{ID: g.ID, Author: g.User.Login, State: g.State, At: t})
 	}
 	return reviews, nil
 }

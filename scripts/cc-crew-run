@@ -40,17 +40,47 @@ cd /workspace
 
 case "$CC_ROLE" in
   implementer)
-    : "${CC_ISSUE_NUM:?CC_ISSUE_NUM required}"
-    : "${CC_BASE_BRANCH:?CC_BASE_BRANCH required}"
-    gh issue view "$CC_ISSUE_NUM" -R "$CC_REPO" --json number,title,body \
-      -q '"# Issue #\(.number): \(.title)\n\n\(.body)"' > /tmp/issue.md
+    case "${CC_TASK_KIND:-create}" in
+      create)
+        : "${CC_ISSUE_NUM:?CC_ISSUE_NUM required}"
+        : "${CC_BASE_BRANCH:?CC_BASE_BRANCH required}"
+        gh issue view "$CC_ISSUE_NUM" -R "$CC_REPO" --json number,title,body \
+          -q '"# Issue #\(.number): \(.title)\n\n\(.body)"' > /tmp/issue.md
 
-    PROMPT="You are the cc-crew implementer. Read /tmp/issue.md and implement the change in the current worktree (branch: claude/issue-${CC_ISSUE_NUM}). Base branch: ${CC_BASE_BRANCH}. Follow your CLAUDE.md instructions exactly."
+        PROMPT="You are the cc-crew implementer. Read /tmp/issue.md and implement the change in the current worktree (branch: claude/issue-${CC_ISSUE_NUM}). Base branch: ${CC_BASE_BRANCH}. Follow your CLAUDE.md instructions exactly."
 
-    exec claude -p "$PROMPT" \
-      --model "$CC_MODEL" \
-      "${max_turns_args[@]}" \
-      --dangerously-skip-permissions
+        exec claude -p "$PROMPT" \
+          --model "$CC_MODEL" \
+          "${max_turns_args[@]}" \
+          --dangerously-skip-permissions
+        ;;
+      address)
+        : "${CC_PR_NUM:?CC_PR_NUM required}"
+        : "${CC_ISSUE_NUM:?CC_ISSUE_NUM required}"
+        : "${CC_REVIEW_IDS:?CC_REVIEW_IDS required}"
+
+        gh pr view "$CC_PR_NUM" -R "$CC_REPO" --json number,title,body \
+          -q '"# PR #\(.number): \(.title)\n\n\(.body)\n\n---\n"' > /tmp/reviews.md
+
+        IFS=',' read -ra IDS <<<"$CC_REVIEW_IDS"
+        for id in "${IDS[@]}"; do
+          gh api "repos/$CC_REPO/pulls/$CC_PR_NUM/reviews/$id" \
+            -q '"## Review \(.id) (state: \(.state))\n\n\(.body // "(no body)")\n"' \
+            >> /tmp/reviews.md
+        done
+
+        PROMPT="You are addressing review feedback on PR #${CC_PR_NUM}. Read /tmp/reviews.md. Make targeted commits on the current branch (claude/issue-${CC_ISSUE_NUM}) that respond to the feedback. Do NOT run gh pr create; the PR already exists. Just git push origin HEAD when done."
+
+        exec claude -p "$PROMPT" \
+          --model "$CC_MODEL" \
+          "${max_turns_args[@]}" \
+          --dangerously-skip-permissions
+        ;;
+      *)
+        echo "unknown CC_TASK_KIND: ${CC_TASK_KIND}" >&2
+        exit 64
+        ;;
+    esac
     ;;
   reviewer)
     : "${CC_PR_NUM:?CC_PR_NUM required}"

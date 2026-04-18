@@ -23,6 +23,13 @@ type Config struct {
 	ReviewingLabel  string
 	ReviewedLabel   string
 
+	// Continuous addressing feature (spec 2026-04-17).
+	AddressLabel    string
+	AddressingLabel string
+	AddressedLabel  string
+	MaxCycles       int
+	Continuous      bool
+
 	AutoReview bool
 
 	ImplMaxTurns   int
@@ -59,6 +66,12 @@ func Defaults() Config {
 		ReviewLabel:     "claude-review",
 		ReviewingLabel:  "claude-reviewing",
 		ReviewedLabel:   "claude-reviewed",
+
+		AddressLabel:    "claude-address",
+		AddressingLabel: "claude-addressing",
+		AddressedLabel:  "claude-addressed",
+		MaxCycles:       3,
+		Continuous:      true,
 
 		// 0 = unlimited; only enforced when the user explicitly sets a cap.
 		ImplMaxTurns:   0,

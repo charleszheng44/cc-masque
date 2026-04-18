@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/charleszheng44/cc-crew/internal/docker"
@@ -17,9 +18,9 @@ func TestExecuteRequeuesOpenIssuesAndPRs(t *testing.T) {
 	f.Issues[10] = &github.Issue{Number: 10, State: "open", Labels: []string{"claude-processing", "claude-done"}}
 	f.PRs[20] = &github.PullRequest{Number: 20, State: "open", Labels: []string{"claude-reviewing", "claude-reviewed"}}
 	f.Refs["refs/heads/claude/issue-10"] = "s1"
-	f.Refs["refs/tags/claim/issue-10/20260417T120000Z"] = "s1"
-	f.Refs["refs/tags/review-lock/pr-20"] = "s2"
-	f.Refs["refs/tags/review-claim/pr-20/20260417T120000Z"] = "s2"
+	f.Refs["refs/cc-crew/claim/issue-10/20260417T120000Z"] = "s1"
+	f.Refs["refs/cc-crew/review-lock/pr-20"] = "s2"
+	f.Refs["refs/cc-crew/review-claim/pr-20/20260417T120000Z"] = "s2"
 
 	wt := worktree.New(t.TempDir())
 	dr := docker.New()
@@ -34,9 +35,9 @@ func TestExecuteRequeuesOpenIssuesAndPRs(t *testing.T) {
 		ReviewerPRs:       []int{20},
 		Refs: []string{
 			"refs/heads/claude/issue-10",
-			"refs/tags/claim/issue-10/20260417T120000Z",
-			"refs/tags/review-lock/pr-20",
-			"refs/tags/review-claim/pr-20/20260417T120000Z",
+			"refs/cc-crew/claim/issue-10/20260417T120000Z",
+			"refs/cc-crew/review-lock/pr-20",
+			"refs/cc-crew/review-claim/pr-20/20260417T120000Z",
 		},
 	}
 	var buf bytes.Buffer
@@ -155,4 +156,102 @@ func hasLabel(ss []string, v string) bool {
 		}
 	}
 	return false
+}
+
+func TestResetRemovesAddresserLabelsAndRefs(t *testing.T) {
+	f := github.NewFake()
+	r := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[88] = &github.PullRequest{
+		Number: 88, State: "open", HeadRefName: "claude/issue-88",
+		HeadRefOid: "sha",
+		Labels:     []string{"claude-address", "claude-addressing", "claude-addressed"},
+	}
+	f.Refs["refs/cc-crew/address-lock/pr-88"] = "sha"
+	f.Refs["refs/cc-crew/address-claim/pr-88/20260417T120000Z"] = "sha"
+	f.Refs["refs/cc-crew/addressed/pr-88/900"] = "sha"
+	f.Refs["refs/cc-crew/addressed/pr-88/901"] = "sha"
+	f.Refs["refs/cc-crew/rereviewed/pr-88/sha"] = "sha"
+
+	repoDir := t.TempDir()
+	if err := exec.Command("git", "-C", repoDir, "init", "-q").Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	wt := worktree.New(repoDir)
+	dr := docker.New()
+	o := Options{
+		GH: f, Docker: dr, WT: wt, Repo: r,
+		TaskLabel: "claude-task", ProcessingLabel: "claude-processing", DoneLabel: "claude-done",
+		ReviewLabel: "claude-review", ReviewingLabel: "claude-reviewing", ReviewedLabel: "claude-reviewed",
+		AddressLabel: "claude-address", AddressingLabel: "claude-addressing", AddressedLabel: "claude-addressed",
+	}
+	p, err := Compute(context.Background(), o)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := Execute(context.Background(), o, p, &buf); err != nil {
+		t.Logf("Execute error (likely from Prune on non-repo tmpdir): %v", err)
+	}
+
+	for ref := range f.Refs {
+		if strings.HasPrefix(ref, "refs/cc-crew/address-lock/pr-88") ||
+			strings.HasPrefix(ref, "refs/cc-crew/address-claim/pr-88/") ||
+			strings.HasPrefix(ref, "refs/cc-crew/addressed/pr-88/") ||
+			strings.HasPrefix(ref, "refs/cc-crew/rereviewed/pr-88/") {
+			t.Fatalf("address/marker ref not cleaned: %s", ref)
+		}
+	}
+	lbls := f.PRs[88].Labels
+	if hasLabel(lbls, "claude-address") ||
+		hasLabel(lbls, "claude-addressing") ||
+		hasLabel(lbls, "claude-addressed") {
+		t.Fatalf("addresser labels still present: %v", lbls)
+	}
+}
+
+// TestResetCleansLegacyTagsNamespace verifies that a post-upgrade
+// `cc-crew reset` still removes stale refs/tags/* state from before the
+// 2026-04-18 migration.
+func TestResetCleansLegacyTagsNamespace(t *testing.T) {
+	f := github.NewFake()
+	r := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[99] = &github.PullRequest{
+		Number: 99, State: "open", HeadRefName: "claude/issue-99",
+		HeadRefOid: "sha",
+		Labels:     []string{"claude-addressing"},
+	}
+	// Seed legacy refs/tags/* paths (pre-migration state).
+	f.Refs["refs/tags/address-lock/pr-99"] = "sha"
+	f.Refs["refs/tags/address-claim/pr-99/20260417T120000Z"] = "sha"
+	f.Refs["refs/tags/cc-crew-addressed/pr-99/700"] = "sha"
+	f.Refs["refs/tags/cc-crew-rereviewed/pr-99/sha"] = "sha"
+
+	repoDir := t.TempDir()
+	if err := exec.Command("git", "-C", repoDir, "init", "-q").Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	wt := worktree.New(repoDir)
+	dr := docker.New()
+	o := Options{
+		GH: f, Docker: dr, WT: wt, Repo: r,
+		TaskLabel: "claude-task", ProcessingLabel: "claude-processing", DoneLabel: "claude-done",
+		ReviewLabel: "claude-review", ReviewingLabel: "claude-reviewing", ReviewedLabel: "claude-reviewed",
+		AddressLabel: "claude-address", AddressingLabel: "claude-addressing", AddressedLabel: "claude-addressed",
+	}
+	p, err := Compute(context.Background(), o)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := Execute(context.Background(), o, p, &buf); err != nil {
+		t.Logf("Execute error (likely from Prune on non-repo tmpdir): %v", err)
+	}
+	for ref := range f.Refs {
+		if strings.HasPrefix(ref, "refs/tags/address-lock/pr-99") ||
+			strings.HasPrefix(ref, "refs/tags/address-claim/pr-99/") ||
+			strings.HasPrefix(ref, "refs/tags/cc-crew-addressed/pr-99/") ||
+			strings.HasPrefix(ref, "refs/tags/cc-crew-rereviewed/pr-99/") {
+			t.Fatalf("legacy ref not cleaned: %s", ref)
+		}
+	}
 }

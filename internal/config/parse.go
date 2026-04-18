@@ -30,6 +30,11 @@ func Parse(flags []string, getenv func(string) string, pwd string) (Config, erro
 
 	fs.StringVar(&c.TaskLabel, "task-label", orDefault(getenv("CC_TASK_LABEL"), c.TaskLabel), "Queue label for implementer")
 	fs.StringVar(&c.ReviewLabel, "review-label", orDefault(getenv("CC_REVIEW_LABEL"), c.ReviewLabel), "Queue label for reviewer")
+	fs.StringVar(&c.AddressLabel, "address-label", orDefault(getenv("CC_ADDRESS_LABEL"), c.AddressLabel), "Queue label for addresser")
+	fs.StringVar(&c.AddressingLabel, "addressing-label", orDefault(getenv("CC_ADDRESSING_LABEL"), c.AddressingLabel), "Lock label for addresser")
+	fs.StringVar(&c.AddressedLabel, "addressed-label", orDefault(getenv("CC_ADDRESSED_LABEL"), c.AddressedLabel), "Done label for addresser")
+	fs.IntVar(&c.MaxCycles, "max-cycles", envInt(getenv, "CC_MAX_CYCLES", c.MaxCycles), "Max address dispatches per PR before the detector stops auto-labeling")
+	fs.BoolVar(&c.Continuous, "continuous", envBool(getenv, "CC_CONTINUOUS", c.Continuous), "Enable continuous addressing (address + re-review loops)")
 	fs.BoolVar(&c.AutoReview, "auto-review", envBool(getenv, "CC_AUTO_REVIEW", c.AutoReview), "Auto-apply review-label to implementer PRs")
 	fs.StringVar(&c.BaseBranch, "base-branch", orDefault(getenv("CC_BASE_BRANCH"), ""), "Base branch (default: GitHub's default branch)")
 	fs.IntVar(&c.ImplMaxTurns, "impl-max-turns", envInt(getenv, "CC_IMPL_MAX_TURNS", c.ImplMaxTurns), "Max Claude turns per implementer task")

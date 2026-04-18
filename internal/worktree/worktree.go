@@ -36,14 +36,28 @@ func (m *Manager) Path(branch string) string {
 	return filepath.Join(m.RepoDir, ".claude-worktrees", filepath.Base(branch))
 }
 
-// Add fetches origin/branch and creates a worktree at Path(branch).
-// If the worktree path already exists, it is removed first.
+// Add fetches origin/branch, force-syncs the local branch ref to match
+// origin, and creates a worktree at Path(branch). Removing the worktree
+// first (if any) releases any git lock on the local branch so the forced
+// fetch can update it.
+//
+// Forcing the ref update matters: a prior dispatch that reset + redeployed
+// the same issue number can leave a stale local `refs/heads/<branch>` on
+// the host (reset only deletes the remote ref, not the host-local ref).
+// A plain `git fetch origin <branch>` only updates FETCH_HEAD, not the
+// local branch — so the worktree would end up checked out at the old SHA,
+// and any new commits would layer on top of the stale history when pushed.
 func (m *Manager) Add(ctx context.Context, branch string) (string, error) {
-	if _, err := m.git(ctx, "fetch", "origin", branch); err != nil {
+	p := m.Path(branch)
+	// Release the local branch (if it's checked out in a stale worktree)
+	// before force-updating its ref.
+	_, _ = m.git(ctx, "worktree", "remove", "--force", p)
+	// Force-sync the local branch to origin's current tip. The leading `+`
+	// in the refspec forces the update even when it isn't fast-forward.
+	refspec := fmt.Sprintf("+refs/heads/%s:refs/heads/%s", branch, branch)
+	if _, err := m.git(ctx, "fetch", "--force", "origin", refspec); err != nil {
 		return "", err
 	}
-	p := m.Path(branch)
-	_, _ = m.git(ctx, "worktree", "remove", "--force", p)
 	if _, err := m.git(ctx, "worktree", "add", "--force", p, branch); err != nil {
 		return "", err
 	}

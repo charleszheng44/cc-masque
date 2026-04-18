@@ -14,10 +14,27 @@ import (
 )
 
 var refPrefixes = []string{
+	// cc-crew-owned implementer branch (unchanged namespace)
 	"heads/claude/issue-",
+	// NEW cc-crew refs
+	"cc-crew/claim/issue-",
+	"cc-crew/review-lock/pr-",
+	"cc-crew/review-claim/pr-",
+	"cc-crew/address-lock/pr-",
+	"cc-crew/address-claim/pr-",
+	"cc-crew/addressed/pr-",
+	"cc-crew/rereviewed/pr-",
+	// LEGACY paths from before the 2026-04-18 cc-crew namespace
+	// migration. Harmless to keep listing — ListMatchingRefs returns
+	// an empty slice when nothing exists under the prefix. Remove in
+	// a future release once no live repo has legacy state.
 	"tags/claim/issue-",
 	"tags/review-lock/pr-",
 	"tags/review-claim/pr-",
+	"tags/address-lock/pr-",
+	"tags/address-claim/pr-",
+	"tags/cc-crew-addressed/pr-",
+	"tags/cc-crew-rereviewed/pr-",
 }
 
 type Plan struct {
@@ -39,6 +56,9 @@ type Options struct {
 	ReviewLabel     string
 	ReviewingLabel  string
 	ReviewedLabel   string
+	AddressLabel    string
+	AddressingLabel string
+	AddressedLabel  string
 }
 
 // Compute builds a Plan without making any changes.
@@ -56,7 +76,7 @@ func Compute(ctx context.Context, o Options) (Plan, error) {
 					p.ImplementerIssues = append(p.ImplementerIssues, n)
 				}
 			}
-			if pref == "tags/review-lock/pr-" {
+			if pref == "cc-crew/review-lock/pr-" || pref == "tags/review-lock/pr-" {
 				if n := parsePR(r.Name); n > 0 {
 					p.ReviewerPRs = append(p.ReviewerPRs, n)
 				}
@@ -80,7 +100,7 @@ func Compute(ctx context.Context, o Options) (Plan, error) {
 			}
 		}
 	}
-	for _, label := range []string{o.ReviewingLabel, o.ReviewedLabel} {
+	for _, label := range []string{o.ReviewingLabel, o.ReviewedLabel, o.AddressingLabel, o.AddressedLabel} {
 		if label == "" {
 			continue
 		}
@@ -161,6 +181,15 @@ func Execute(ctx context.Context, o Options, p Plan, out io.Writer) error {
 		if o.ReviewedLabel != "" {
 			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.ReviewedLabel)
 		}
+		if o.AddressLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.AddressLabel)
+		}
+		if o.AddressingLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.AddressingLabel)
+		}
+		if o.AddressedLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.AddressedLabel)
+		}
 		_ = o.GH.AddLabel(ctx, o.Repo, n, o.ReviewLabel)
 	}
 	for _, wt := range p.Worktrees {
@@ -184,12 +213,20 @@ func parseIssue(refName string) int {
 }
 
 func parsePR(refName string) int {
-	s := strings.TrimPrefix(refName, "refs/tags/review-lock/pr-")
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return 0
+	for _, prefix := range []string{
+		"refs/cc-crew/review-lock/pr-",
+		"refs/tags/review-lock/pr-",
+	} {
+		s := strings.TrimPrefix(refName, prefix)
+		if s != refName {
+			n, err := strconv.Atoi(s)
+			if err != nil {
+				return 0
+			}
+			return n
+		}
 	}
-	return n
+	return 0
 }
 
 func isOpenIssue(is []github.Issue, n int) bool {

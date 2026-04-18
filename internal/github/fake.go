@@ -22,6 +22,7 @@ type FakeClient struct {
 
 	// Hooks for injecting errors in specific calls. Leave nil to disable.
 	CreateRefHook func(ref string) error
+	DeleteRefHook func(ref string) error
 }
 
 func NewFake() *FakeClient {
@@ -194,6 +195,11 @@ func (f *FakeClient) CreateRef(ctx context.Context, r Repo, ref, sha string) err
 func (f *FakeClient) DeleteRef(ctx context.Context, r Repo, ref string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.DeleteRefHook != nil {
+		if err := f.DeleteRefHook(ref); err != nil {
+			return err
+		}
+	}
 	delete(f.Refs, ref)
 	return nil
 }

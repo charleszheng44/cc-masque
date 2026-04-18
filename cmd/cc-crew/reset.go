@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/charleszheng44/cc-crew/internal/config"
@@ -12,6 +13,42 @@ import (
 	"github.com/charleszheng44/cc-crew/internal/reset"
 	"github.com/charleszheng44/cc-crew/internal/worktree"
 )
+
+// printPlan writes every item the plan would touch, grouped by kind. Used
+// by `reset` dry-run so operators can review the full blast radius before
+// re-running with --yes.
+func printPlan(w io.Writer, p reset.Plan) {
+	if len(p.Containers) > 0 {
+		fmt.Fprintln(w, "containers to kill:")
+		for _, c := range p.Containers {
+			fmt.Fprintf(w, "  %s\n", c)
+		}
+	}
+	if len(p.Refs) > 0 {
+		fmt.Fprintln(w, "refs to delete:")
+		for _, r := range p.Refs {
+			fmt.Fprintf(w, "  %s\n", r)
+		}
+	}
+	if len(p.ImplementerIssues) > 0 {
+		fmt.Fprintln(w, "issues to requeue:")
+		for _, n := range p.ImplementerIssues {
+			fmt.Fprintf(w, "  #%d\n", n)
+		}
+	}
+	if len(p.ReviewerPRs) > 0 {
+		fmt.Fprintln(w, "PRs to requeue:")
+		for _, n := range p.ReviewerPRs {
+			fmt.Fprintf(w, "  #%d\n", n)
+		}
+	}
+	if len(p.Worktrees) > 0 {
+		fmt.Fprintln(w, "worktrees to remove:")
+		for _, wt := range p.Worktrees {
+			fmt.Fprintf(w, "  %s\n", wt)
+		}
+	}
+}
 
 func firstNonEmpty(vals ...string) string {
 	for _, v := range vals {
@@ -49,6 +86,9 @@ func runReset(args []string) int {
 		ReviewLabel:     firstNonEmpty(os.Getenv("CC_REVIEW_LABEL"), defaults.ReviewLabel),
 		ReviewingLabel:  firstNonEmpty(os.Getenv("CC_REVIEWING_LABEL"), defaults.ReviewingLabel),
 		ReviewedLabel:   firstNonEmpty(os.Getenv("CC_REVIEWED_LABEL"), defaults.ReviewedLabel),
+		AddressLabel:    firstNonEmpty(os.Getenv("CC_ADDRESS_LABEL"), defaults.AddressLabel),
+		AddressingLabel: firstNonEmpty(os.Getenv("CC_ADDRESSING_LABEL"), defaults.AddressingLabel),
+		AddressedLabel:  firstNonEmpty(os.Getenv("CC_ADDRESSED_LABEL"), defaults.AddressedLabel),
 	}
 	plan, err := reset.Compute(ctx, o)
 	if err != nil {
@@ -59,6 +99,7 @@ func runReset(args []string) int {
 		len(plan.Refs), len(plan.Containers), len(plan.Worktrees),
 		len(plan.ImplementerIssues), len(plan.ReviewerPRs))
 	if !*yes {
+		printPlan(os.Stdout, plan)
 		fmt.Println("(dry run) re-run with --yes to apply")
 		return 0
 	}

@@ -18,12 +18,13 @@ type Kind int
 const (
 	KindImplementer Kind = iota
 	KindReviewer
+	KindAddresser
 )
 
 // Paths encodes the ref-name layout for each kind.
 type Paths struct {
 	LockRef   string // e.g. "refs/heads/claude/issue-42"
-	TagPrefix string // e.g. "tags/claim/issue-42/"
+	RefPrefix string // e.g. "cc-crew/claim/issue-42/"
 }
 
 // PathsFor returns the refs for a given work item.
@@ -32,20 +33,25 @@ func PathsFor(k Kind, number int) Paths {
 	case KindImplementer:
 		return Paths{
 			LockRef:   fmt.Sprintf("refs/heads/claude/issue-%d", number),
-			TagPrefix: fmt.Sprintf("tags/claim/issue-%d/", number),
+			RefPrefix: fmt.Sprintf("cc-crew/claim/issue-%d/", number),
 		}
 	case KindReviewer:
 		return Paths{
-			LockRef:   fmt.Sprintf("refs/tags/review-lock/pr-%d", number),
-			TagPrefix: fmt.Sprintf("tags/review-claim/pr-%d/", number),
+			LockRef:   fmt.Sprintf("refs/cc-crew/review-lock/pr-%d", number),
+			RefPrefix: fmt.Sprintf("cc-crew/review-claim/pr-%d/", number),
+		}
+	case KindAddresser:
+		return Paths{
+			LockRef:   fmt.Sprintf("refs/cc-crew/address-lock/pr-%d", number),
+			RefPrefix: fmt.Sprintf("cc-crew/address-claim/pr-%d/", number),
 		}
 	}
 	panic("unreachable")
 }
 
-// TimestampTagName returns "refs/tags/<TagPrefix><now-UTC>".
+// TimestampTagName returns "refs/<RefPrefix><now-UTC>".
 func (p Paths) TimestampTagName(now time.Time) string {
-	return "refs/" + p.TagPrefix + now.UTC().Format(TimestampFormat)
+	return "refs/" + p.RefPrefix + now.UTC().Format(TimestampFormat)
 }
 
 type Claimer struct {
@@ -88,7 +94,7 @@ func (c *Claimer) TryClaim(ctx context.Context, k Kind, number int, sha string) 
 // For a successful reviewer: deleteLock=true.
 func (c *Claimer) Release(ctx context.Context, k Kind, number int, deleteLock bool) error {
 	p := PathsFor(k, number)
-	tags, err := c.GH.ListMatchingRefs(ctx, c.Repo, p.TagPrefix)
+	tags, err := c.GH.ListMatchingRefs(ctx, c.Repo, p.RefPrefix)
 	if err != nil {
 		return fmt.Errorf("list tags for release: %w", err)
 	}
@@ -109,7 +115,7 @@ func (c *Claimer) Release(ctx context.Context, k Kind, number int, deleteLock bo
 // paths' prefix, or (0, ok=false) if none exist.
 func (c *Claimer) OldestTagAge(ctx context.Context, k Kind, number int) (time.Duration, bool, error) {
 	p := PathsFor(k, number)
-	tags, err := c.GH.ListMatchingRefs(ctx, c.Repo, p.TagPrefix)
+	tags, err := c.GH.ListMatchingRefs(ctx, c.Repo, p.RefPrefix)
 	if err != nil {
 		return 0, false, err
 	}
