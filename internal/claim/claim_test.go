@@ -2,6 +2,7 @@ package claim
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -78,5 +79,56 @@ func TestOldestTagAge(t *testing.T) {
 	}
 	if age != 30*time.Minute {
 		t.Fatalf("got %v", age)
+	}
+}
+
+func TestPathsForAddresser(t *testing.T) {
+	p := PathsFor(KindAddresser, 42)
+	if p.LockRef != "refs/tags/address-lock/pr-42" {
+		t.Fatalf("LockRef = %q", p.LockRef)
+	}
+	if p.TagPrefix != "tags/address-claim/pr-42/" {
+		t.Fatalf("TagPrefix = %q", p.TagPrefix)
+	}
+}
+
+func TestTryClaimAddresser(t *testing.T) {
+	f := github.NewFake()
+	r := github.Repo{Owner: "a", Name: "b"}
+	c := New(f, r)
+	c.Now = func() time.Time { return time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC) }
+
+	won, err := c.TryClaim(context.Background(), KindAddresser, 42, "sha-head")
+	if err != nil || !won {
+		t.Fatalf("first claim: won=%v err=%v", won, err)
+	}
+	if _, ok := f.Refs["refs/tags/address-lock/pr-42"]; !ok {
+		t.Fatal("address-lock tag not created")
+	}
+	if _, ok := f.Refs["refs/tags/address-claim/pr-42/20260417T120000Z"]; !ok {
+		t.Fatal("address-claim timestamp tag not created")
+	}
+
+	// Second orchestrator racing — lose.
+	won2, err := c.TryClaim(context.Background(), KindAddresser, 42, "sha-head")
+	if err != nil || won2 {
+		t.Fatalf("second claim: won=%v err=%v (expected lost)", won2, err)
+	}
+}
+
+func TestReleaseAddresserDeletesBothTags(t *testing.T) {
+	f := github.NewFake()
+	r := github.Repo{Owner: "a", Name: "b"}
+	c := New(f, r)
+	c.Now = func() time.Time { return time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC) }
+
+	_, _ = c.TryClaim(context.Background(), KindAddresser, 7, "sha")
+	if err := c.Release(context.Background(), KindAddresser, 7, true); err != nil {
+		t.Fatal(err)
+	}
+	for ref := range f.Refs {
+		if strings.Contains(ref, "address-lock/pr-7") || strings.Contains(ref, "address-claim/pr-7") {
+			t.Fatalf("ref still present after release: %s", ref)
+		}
 	}
 }
