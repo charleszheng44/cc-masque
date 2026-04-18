@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -163,9 +164,23 @@ func (l *Lifecycle) dispatchAddresser(ctx context.Context, log *slog.Logger, num
 		// every review already addressed. Don't run a container that would
 		// fail with CC_REVIEW_IDS=""; drop the label and release the lock.
 		log.Warn("no unaddressed reviews at dispatch time; dropping address label without running container")
-		_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
-		_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
-		_ = l.Claimer.Release(ctx, claim.KindAddresser, number, true)
+		// Release first: if it fails after retries, KEEP the labels so the
+		// PR stays in a consistent "address in progress" state. Scheduler
+		// won't re-claim (claude-addressing excludes it from candidates)
+		// and detector won't re-label (claude-address triggers skip-guard)
+		// — reclaim sweeper repairs on its next pass. Removing labels
+		// first would strand the orphan lock with no visible PR state,
+		// causing every subsequent tick to silently fail TryClaim.
+		if err := l.releaseWithRetry(ctx, claim.KindAddresser, number, true); err != nil {
+			log.Warn("guard: release failed; leaving labels so reclaim sweeper can repair state", "err", err)
+			return
+		}
+		if err := l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel); err != nil {
+			log.Warn("guard: remove addressing label failed", "err", err)
+		}
+		if err := l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel); err != nil {
+			log.Warn("guard: remove address label failed", "err", err)
+		}
 		return
 	}
 
@@ -343,7 +358,7 @@ func (l *Lifecycle) successCleanup(ctx context.Context, number int) {
 	_ = l.GH.AddLabel(ctx, l.Repo, number, l.DoneLabel)
 
 	// Implementer: keep the lock branch (PR references it).
-	_ = l.Claimer.Release(ctx, l.Kind, number, false)
+	_ = l.releaseWithRetry(ctx, l.Kind, number, false)
 	if l.AutoReview {
 		branch := fmt.Sprintf("claude/issue-%d", number)
 		prs, err := l.GH.ListPRs(ctx, l.Repo, nil, nil)
@@ -367,14 +382,12 @@ func (l *Lifecycle) successCleanupReviewer(ctx context.Context, number int, head
 	// for the current head SHA, and flips the PR back to claude-review.
 	if headSha != "" {
 		ref := fmt.Sprintf("refs/tags/cc-crew-rereviewed/pr-%d/%s", number, headSha)
-		if err := l.GH.CreateRef(ctx, l.Repo, ref, headSha); err != nil {
-			l.Log.Warn("rereviewed marker create failed", "pr", number, "sha", headSha, "err", err)
-		}
+		_ = l.createRefWithRetry(ctx, ref, headSha)
 	}
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
 	_ = l.GH.AddLabel(ctx, l.Repo, number, l.DoneLabel)
-	_ = l.Claimer.Release(ctx, l.Kind, number, true)
+	_ = l.releaseWithRetry(ctx, l.Kind, number, true)
 }
 
 func (l *Lifecycle) successCleanupAddresser(ctx context.Context, prNumber int, reviewIDs []int) {
@@ -391,20 +404,18 @@ func (l *Lifecycle) successCleanupAddresser(ctx context.Context, prNumber int, r
 	}
 	for _, id := range reviewIDs {
 		ref := fmt.Sprintf("refs/tags/cc-crew-addressed/pr-%d/%d", prNumber, id)
-		if err := l.GH.CreateRef(ctx, l.Repo, ref, markerSha); err != nil {
-			l.Log.Warn("addressed marker create failed", "pr", prNumber, "review_id", id, "err", err)
-		}
+		_ = l.createRefWithRetry(ctx, ref, markerSha)
 	}
 	_ = l.GH.RemoveLabel(ctx, l.Repo, prNumber, l.LockLabel)
 	_ = l.GH.RemoveLabel(ctx, l.Repo, prNumber, l.QueueLabel)
 	_ = l.GH.AddLabel(ctx, l.Repo, prNumber, l.DoneLabel)
 	// Release address-lock + address-claim ts tags last.
-	_ = l.Claimer.Release(ctx, claim.KindAddresser, prNumber, true)
+	_ = l.releaseWithRetry(ctx, claim.KindAddresser, prNumber, true)
 }
 
 func (l *Lifecycle) failCleanup(ctx context.Context, number int) {
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
-	_ = l.Claimer.Release(ctx, l.Kind, number, true)
+	_ = l.releaseWithRetry(ctx, l.Kind, number, true)
 }
 
 func (l *Lifecycle) removeWorktree(ctx context.Context, number int) {
@@ -460,4 +471,65 @@ func safeName(s string) string {
 		}
 	}
 	return string(out)
+}
+
+// retryBackoff is the base delay between attempts. Exponentiates: 500ms, 1s, 2s.
+// Package-level vars so tests can shrink them.
+var (
+	retryAttempts = 3
+	retryBackoff  = 500 * time.Millisecond
+)
+
+// releaseWithRetry wraps Claimer.Release with exponential backoff. Returns the
+// last error after all attempts are exhausted. Callers that must NOT proceed
+// with subsequent cleanup on failure (e.g. the empty-snapshot guard) should
+// check the returned error and keep the PR's address/review labels intact so
+// the reclaim sweeper can repair state on its next pass.
+func (l *Lifecycle) releaseWithRetry(ctx context.Context, k claim.Kind, number int, deleteLock bool) error {
+	backoff := retryBackoff
+	var err error
+	for attempt := 1; attempt <= retryAttempts; attempt++ {
+		err = l.Claimer.Release(ctx, k, number, deleteLock)
+		if err == nil {
+			return nil
+		}
+		l.Log.Warn("release failed; will retry",
+			"kind", kindName(k), "number", number, "attempt", attempt, "err", err)
+		if attempt < retryAttempts {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+		}
+	}
+	l.Log.Error("release failed after retries; reclaim sweeper will need to clean up",
+		"kind", kindName(k), "number", number, "err", err)
+	return err
+}
+
+// createRefWithRetry wraps GH.CreateRef with exponential backoff for markers.
+// An "already exists" result counts as success (idempotent).
+func (l *Lifecycle) createRefWithRetry(ctx context.Context, ref, sha string) error {
+	backoff := retryBackoff
+	var err error
+	for attempt := 1; attempt <= retryAttempts; attempt++ {
+		err = l.GH.CreateRef(ctx, l.Repo, ref, sha)
+		if err == nil || errors.Is(err, github.ErrRefExists) {
+			return nil
+		}
+		l.Log.Warn("create ref failed; will retry",
+			"ref", ref, "attempt", attempt, "err", err)
+		if attempt < retryAttempts {
+			select {
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-time.After(backoff):
+			}
+			backoff *= 2
+		}
+	}
+	l.Log.Error("create ref failed after retries", "ref", ref, "err", err)
+	return err
 }

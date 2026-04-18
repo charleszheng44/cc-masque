@@ -277,6 +277,97 @@ func TestAddresserSuccessMarkersWrittenBeforeLabelsRemoved(t *testing.T) {
 	}
 }
 
+// TestAddresserGuardRetriesReleaseOnTransientFailure verifies that a flaky
+// DeleteRef (simulated via FakeClient.DeleteRefHook) is retried and the
+// guard eventually succeeds — no stuck lock, labels correctly cleaned up.
+func TestAddresserGuardRetriesReleaseOnTransientFailure(t *testing.T) {
+	// Shrink retry backoff for the test. Restored on defer.
+	origBackoff := retryBackoff
+	retryBackoff = 1 * time.Millisecond
+	defer func() { retryBackoff = origBackoff }()
+
+	f := github.NewFake()
+	repo := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[80] = &github.PullRequest{
+		Number: 80, State: "open", HeadRefName: "claude/issue-80",
+		HeadRefOid: "sha", Labels: []string{"claude-address", "claude-addressing"},
+	}
+	f.Refs["refs/tags/address-lock/pr-80"] = "sha"
+	f.Refs["refs/tags/address-claim/pr-80/20260417T130000Z"] = "sha"
+	// Review 501 is already addressed → snapshot returns empty → guard path.
+	f.Reviews[80] = []github.Review{{ID: 501, State: "COMMENTED"}}
+	f.Refs["refs/tags/cc-crew-addressed/pr-80/501"] = "sha"
+
+	// Fail the first DeleteRef call, succeed after that.
+	failuresLeft := 1
+	f.DeleteRefHook = func(ref string) error {
+		if failuresLeft > 0 {
+			failuresLeft--
+			return fmt.Errorf("simulated transient failure")
+		}
+		return nil
+	}
+
+	l := &Lifecycle{
+		Kind: claim.KindAddresser, Claimer: claim.New(f, repo), GH: f, Repo: repo,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-address",
+		LockLabel:  "claude-addressing",
+		DoneLabel:  "claude-addressed",
+	}
+	l.dispatchAddresser(context.Background(), l.Log, 80)
+
+	if _, ok := f.Refs["refs/tags/address-lock/pr-80"]; ok {
+		t.Fatalf("address-lock should be released after retry; refs=%v", keys(f.Refs))
+	}
+	lbls := f.PRs[80].Labels
+	if containsLabel(lbls, "claude-address") || containsLabel(lbls, "claude-addressing") {
+		t.Fatalf("labels should be cleaned up after successful retry: %v", lbls)
+	}
+}
+
+// TestAddresserGuardKeepsLabelsIfReleaseFailsPermanently verifies that when
+// Release retries exhaust, the labels are NOT removed so state remains
+// consistent and the reclaim sweeper can repair it on its next pass.
+func TestAddresserGuardKeepsLabelsIfReleaseFailsPermanently(t *testing.T) {
+	origBackoff := retryBackoff
+	retryBackoff = 1 * time.Millisecond
+	defer func() { retryBackoff = origBackoff }()
+
+	f := github.NewFake()
+	repo := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[81] = &github.PullRequest{
+		Number: 81, State: "open", HeadRefName: "claude/issue-81",
+		HeadRefOid: "sha", Labels: []string{"claude-address", "claude-addressing"},
+	}
+	f.Refs["refs/tags/address-lock/pr-81"] = "sha"
+	f.Refs["refs/tags/address-claim/pr-81/20260417T130000Z"] = "sha"
+	f.Reviews[81] = []github.Review{{ID: 502, State: "COMMENTED"}}
+	f.Refs["refs/tags/cc-crew-addressed/pr-81/502"] = "sha"
+
+	// All DeleteRef attempts fail — simulate a persistent outage.
+	f.DeleteRefHook = func(ref string) error { return fmt.Errorf("simulated persistent failure") }
+
+	l := &Lifecycle{
+		Kind: claim.KindAddresser, Claimer: claim.New(f, repo), GH: f, Repo: repo,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-address",
+		LockLabel:  "claude-addressing",
+		DoneLabel:  "claude-addressed",
+	}
+	l.dispatchAddresser(context.Background(), l.Log, 81)
+
+	// Lock tag still present (release failed all attempts).
+	if _, ok := f.Refs["refs/tags/address-lock/pr-81"]; !ok {
+		t.Fatal("address-lock should still exist when Release fails")
+	}
+	// Labels preserved so reclaim sweeper sees a consistent in-progress state.
+	lbls := f.PRs[81].Labels
+	if !containsLabel(lbls, "claude-address") || !containsLabel(lbls, "claude-addressing") {
+		t.Fatalf("labels should be preserved on Release failure: %v", lbls)
+	}
+}
+
 func containsLabel(ss []string, v string) bool {
 	for _, s := range ss {
 		if s == v {
