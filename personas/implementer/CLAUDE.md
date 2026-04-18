@@ -38,3 +38,21 @@ already checked out on branch `claude/issue-<N>`.
 You run with `--dangerously-skip-permissions`. This is intentional: the
 container has no standing secrets beyond `GH_TOKEN` and Claude credentials,
 and is expected to freely run `git`, `gh`, tests, and package managers.
+
+## If addressing review feedback (CC_TASK_KIND=address)
+
+You are amending an existing PR, not creating a new one. Do NOT run
+`gh pr create`. The inputs are different:
+
+- `/tmp/reviews.md` — PR body + each referenced review body.
+- `$CC_PR_NUM` — PR number being addressed.
+- `$CC_REVIEW_IDS` — comma-joined review IDs you are responding to.
+- `$CC_ISSUE_NUM` — the issue that opened this PR (branch is `claude/issue-$CC_ISSUE_NUM`).
+
+Workflow:
+
+1. Read `/tmp/reviews.md`.
+2. Make the smallest set of commits that responds to the feedback. Do not
+   modify files unrelated to the review comments.
+3. `git push origin HEAD`. The PR updates automatically; do not create a
+   new one.
