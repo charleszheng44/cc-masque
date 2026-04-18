@@ -56,13 +56,17 @@ No new labels for the re-review loop — it reuses `claude-review` and
 
 | Ref | Created by | Purpose |
 |---|---|---|
-| `refs/tags/address-claim/pr-{N}/{ts}` | Orchestrator (on claim) | Claim timestamp for addresser dispatch |
+| `refs/tags/address-lock/pr-{N}` | Orchestrator (on claim) | Atomic lock tag (fixed name) for addresser dispatch |
+| `refs/tags/address-claim/pr-{N}/{ts}` | Orchestrator (on claim) | Claim timestamp for age tracking / reclaim sweeper |
 | `refs/tags/cc-crew-addressed/pr-{N}/{review-id}` | Orchestrator (on addresser success) | Marker: review ID has been addressed |
 | `refs/tags/cc-crew-rereviewed/pr-{N}/{head-sha}` | Orchestrator (on reviewer success) | Marker: head SHA has been reviewed |
 
-Addresser reuses the **existing** `refs/heads/claude/issue-{M}` branch as
-its lock (the PR's source branch, alive for the PR's lifetime). No new lock
-ref — the branch already serves that role.
+The addresser does its work on the **existing** `refs/heads/claude/issue-{M}`
+branch (the PR's source branch, alive for the PR's lifetime) — no new
+branch is created. The atomic claim is arbitrated on
+`refs/tags/address-lock/pr-{N}` (fixed name, `POST /git/refs` returns 422
+if it exists), mirroring the reviewer's `review-lock` + `review-claim`
+split (spec §5).
 
 Timestamps use `YYYYMMDDTHHMMSSZ` (same as existing claim tags).
 
@@ -201,10 +205,13 @@ the rest of the orchestrator's design.
        go dispatch_addresser(pr.number, pr.headRefOid, snapshot_review_ids)
 
 3. try_claim_address(N, head_sha):
-   POST /git/refs  {ref: refs/tags/address-claim/pr-N/{ts}, sha: head_sha}
-     201 → won
+   POST /git/refs  {ref: refs/tags/address-lock/pr-N, sha: head_sha}
+     201 → won the atomic arbitration
      422 "already exists" → lost race, skip
-   (no new lock ref — refs/heads/claude/issue-M serves this role)
+   if won:
+     POST /git/refs  {ref: refs/tags/address-claim/pr-N/{ts}, sha: head_sha}
+     (separate timestamp tag for age/reclaim; failure is non-fatal —
+      the reclaim sweeper re-creates missing ts tags atomically, §8.3)
 
 4. dispatch_addresser(N, head_sha, review_ids):
    host: git fetch origin claude/issue-M
@@ -225,6 +232,7 @@ the rest of the orchestrator's design.
    - for each id in review_ids:
        create refs/tags/cc-crew-addressed/pr-N/{id}
    - delete refs/tags/address-claim/pr-N/{ts}
+   - delete refs/tags/address-lock/pr-N
    - remove labels: claude-address, claude-addressing
    - add label: claude-addressed
    - DO NOT delete refs/heads/claude/issue-M (PR still open)
@@ -232,6 +240,7 @@ the rest of the orchestrator's design.
 6. on nonzero exit / timeout (failCleanup):
    - remove label: claude-addressing
    - delete refs/tags/address-claim/pr-N/{ts}
+   - delete refs/tags/address-lock/pr-N
    - leave claude-address on the PR (queue re-processes on next tick)
    - DO NOT create cc-crew-addressed markers
 
@@ -327,6 +336,7 @@ Extends in three places:
 - **Strip-label set** now includes `claude-address`, `claude-addressing`,
   `claude-addressed`.
 - **Ref prefixes** to enumerate-and-delete extend to:
+  - `tags/address-lock/pr-*`
   - `tags/address-claim/pr-*`
   - `tags/cc-crew-addressed/pr-*`
   - `tags/cc-crew-rereviewed/pr-*`
