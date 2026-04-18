@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -68,5 +69,59 @@ func TestTickClaimsAndDispatches(t *testing.T) {
 	}
 	if _, ok := f.Refs["refs/heads/claude/issue-2"]; !ok {
 		t.Fatal("issue 2 lock not created")
+	}
+}
+
+type fakeDispatcher struct {
+	mu sync.Mutex
+	n  []int
+}
+
+func (d *fakeDispatcher) Dispatch(ctx context.Context, number int) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	d.n = append(d.n, number)
+}
+
+func (d *fakeDispatcher) calls() []int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	out := make([]int, len(d.n))
+	copy(out, d.n)
+	return out
+}
+
+func TestSchedulerAddresserListsAndClaims(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[7] = &github.PullRequest{
+		Number: 7, State: "open", HeadRefName: "claude/issue-7",
+		HeadRefOid: "sha-7", Labels: []string{"claude-address"},
+	}
+	disp := &fakeDispatcher{}
+	s := &Scheduler{
+		Kind: claim.KindAddresser, Sem: NewSemaphore(1),
+		Claimer:    claim.New(f, repo),
+		GH:         f,
+		Repo:       repo,
+		Dispatcher: disp,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-address",
+		LockLabel:  "claude-addressing",
+	}
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	// Tick dispatches in a goroutine — wait briefly for it.
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for len(disp.calls()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := disp.calls()
+	if len(got) != 1 || got[0] != 7 {
+		t.Fatalf("dispatched calls = %v, want [7]", got)
+	}
+	if _, ok := f.Refs["refs/tags/address-lock/pr-7"]; !ok {
+		t.Fatalf("address-lock not created; refs = %v", keys(f.Refs))
 	}
 }

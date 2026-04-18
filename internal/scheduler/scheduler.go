@@ -100,7 +100,7 @@ func (s *Scheduler) listCandidates(ctx context.Context) ([]int, error) {
 		}
 		sortAsc(nums)
 		return nums, nil
-	case claim.KindReviewer:
+	case claim.KindReviewer, claim.KindAddresser:
 		prs, err := s.GH.ListPRs(ctx, s.Repo, []string{s.QueueLabel}, []string{s.LockLabel})
 		if err != nil {
 			return nil, err
@@ -128,12 +128,12 @@ func (s *Scheduler) tryClaimOne(ctx context.Context, n int) (bool, string, error
 		}
 		won, err := s.Claimer.TryClaim(ctx, claim.KindImplementer, n, ref.SHA)
 		return won, ref.SHA, err
-	case claim.KindReviewer:
+	case claim.KindReviewer, claim.KindAddresser:
 		pr, err := s.GH.GetPR(ctx, s.Repo, n)
 		if err != nil {
 			return false, "", err
 		}
-		won, err := s.Claimer.TryClaim(ctx, claim.KindReviewer, n, pr.HeadRefOid)
+		won, err := s.Claimer.TryClaim(ctx, s.Kind, n, pr.HeadRefOid)
 		return won, pr.HeadRefOid, err
 	}
 	return false, "", nil
