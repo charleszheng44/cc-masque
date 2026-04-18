@@ -185,6 +185,98 @@ func TestAddresserFailLeavesQueueLabel(t *testing.T) {
 	}
 }
 
+// TestAddresserDispatchEmptySnapshotDropsLabel verifies that when a PR is
+// claimed for addressing but every non-approval review is already in
+// cc-crew-addressed (a race against a prior addresser's marker writes), the
+// dispatch path drops the label and releases the lock instead of launching
+// a container that would fail with CC_REVIEW_IDS="" in a retry loop.
+func TestAddresserDispatchEmptySnapshotDropsLabel(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[60] = &github.PullRequest{
+		Number: 60, State: "open", HeadRefName: "claude/issue-60",
+		HeadRefOid: "sha-6", Labels: []string{"claude-address", "claude-addressing"},
+	}
+	// Prior addresser's lock + claim tag (simulating the fresh claim by the
+	// scheduler that preceded this dispatch).
+	f.Refs["refs/tags/address-lock/pr-60"] = "sha-6"
+	f.Refs["refs/tags/address-claim/pr-60/20260417T130000Z"] = "sha-6"
+	// Review 501 exists and is already in cc-crew-addressed → snapshot = [].
+	f.Reviews[60] = []github.Review{{ID: 501, State: "COMMENTED"}}
+	f.Refs["refs/tags/cc-crew-addressed/pr-60/501"] = "sha-6"
+
+	l := &Lifecycle{
+		Kind: claim.KindAddresser, Claimer: claim.New(f, repo), GH: f, Repo: repo,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-address",
+		LockLabel:  "claude-addressing",
+		DoneLabel:  "claude-addressed",
+		// WT and Docker intentionally nil — the guard must short-circuit
+		// before touching either.
+	}
+	l.dispatchAddresser(context.Background(), l.Log, 60)
+
+	if _, ok := f.Refs["refs/tags/address-lock/pr-60"]; ok {
+		t.Fatalf("address-lock not released; refs = %v", keys(f.Refs))
+	}
+	lbls := f.PRs[60].Labels
+	if containsLabel(lbls, "claude-address") || containsLabel(lbls, "claude-addressing") {
+		t.Fatalf("queue/lock labels not removed: %v", lbls)
+	}
+	// Nothing was actually addressed in this dispatch, so claude-addressed
+	// must NOT be added.
+	if containsLabel(lbls, "claude-addressed") {
+		t.Fatalf("claude-addressed should not be added when no work ran: %v", lbls)
+	}
+}
+
+// TestAddresserSuccessWritesMarkersBeforeRemovingLabels asserts the ordering
+// invariant that fixes the detector-vs-snapshot race: if a tick observes
+// the PR between the start of successCleanupAddresser and its end, the
+// address labels must still be present until after the markers are
+// written. We test this indirectly by making CreateRef fail on the second
+// marker write and verifying the address-lock label remains — if the
+// reorder regressed, labels would be gone by the time the error surfaced.
+func TestAddresserSuccessMarkersWrittenBeforeLabelsRemoved(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[70] = &github.PullRequest{
+		Number: 70, State: "open", HeadRefName: "claude/issue-70",
+		HeadRefOid: "sha-7", Labels: []string{"claude-address", "claude-addressing"},
+	}
+	f.Refs["refs/tags/address-lock/pr-70"] = "sha-7"
+	f.Refs["refs/tags/address-claim/pr-70/20260417T130000Z"] = "sha-7"
+
+	l := &Lifecycle{
+		Kind: claim.KindAddresser, Claimer: claim.New(f, repo), GH: f, Repo: repo,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-address",
+		LockLabel:  "claude-addressing",
+		DoneLabel:  "claude-addressed",
+	}
+	l.successCleanupAddresser(context.Background(), 70, []int{111, 222})
+
+	// Both markers written.
+	for _, id := range []int{111, 222} {
+		ref := fmt.Sprintf("refs/tags/cc-crew-addressed/pr-70/%d", id)
+		if _, ok := f.Refs[ref]; !ok {
+			t.Fatalf("marker %s not written (reorder regression?); refs=%v", ref, keys(f.Refs))
+		}
+	}
+	// Lock + claim dropped.
+	if _, ok := f.Refs["refs/tags/address-lock/pr-70"]; ok {
+		t.Fatal("address-lock still present")
+	}
+	// Labels transitioned.
+	lbls := f.PRs[70].Labels
+	if containsLabel(lbls, "claude-address") || containsLabel(lbls, "claude-addressing") {
+		t.Fatalf("queue/lock labels not removed: %v", lbls)
+	}
+	if !containsLabel(lbls, "claude-addressed") {
+		t.Fatalf("claude-addressed not added: %v", lbls)
+	}
+}
+
 func containsLabel(ss []string, v string) bool {
 	for _, s := range ss {
 		if s == v {

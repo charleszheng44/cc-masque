@@ -156,6 +156,18 @@ func (l *Lifecycle) dispatchAddresser(ctx context.Context, log *slog.Logger, num
 		l.failCleanup(ctx, number)
 		return
 	}
+	if len(reviewIDs) == 0 {
+		// Defensive: the detector should have skipped this PR, but a race
+		// (e.g., a concurrent dispatch finishing its marker writes between
+		// detector tick and our claim) can leave the label in place with
+		// every review already addressed. Don't run a container that would
+		// fail with CC_REVIEW_IDS=""; drop the label and release the lock.
+		log.Warn("no unaddressed reviews at dispatch time; dropping address label without running container")
+		_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
+		_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
+		_ = l.Claimer.Release(ctx, claim.KindAddresser, number, true)
+		return
+	}
 
 	wtPath, err := l.WT.AddDetached(ctx, fmt.Sprintf("address-%d", number), pr.HeadRefOid)
 	if err != nil {
@@ -347,41 +359,47 @@ func (l *Lifecycle) successCleanup(ctx context.Context, number int) {
 }
 
 func (l *Lifecycle) successCleanupReviewer(ctx context.Context, number int, headSha string) {
-	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
-	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
-	_ = l.GH.AddLabel(ctx, l.Repo, number, l.DoneLabel)
-	_ = l.Claimer.Release(ctx, l.Kind, number, true)
-
-	// Mark this head SHA as reviewed so the continuous detector doesn't
-	// re-queue it. Best-effort: a failure only delays re-review detection.
+	// Order matters: write the rereviewed marker BEFORE flipping labels or
+	// releasing the lock. The continuous detector's skip-guard checks for
+	// claude-review/claude-reviewing on the PR; as long as one of those is
+	// present, the detector won't re-queue. Removing them first opens a
+	// window where the detector sees claude-reviewed present + no marker
+	// for the current head SHA, and flips the PR back to claude-review.
 	if headSha != "" {
 		ref := fmt.Sprintf("refs/tags/cc-crew-rereviewed/pr-%d/%s", number, headSha)
 		if err := l.GH.CreateRef(ctx, l.Repo, ref, headSha); err != nil {
 			l.Log.Warn("rereviewed marker create failed", "pr", number, "sha", headSha, "err", err)
 		}
 	}
+	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
+	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
+	_ = l.GH.AddLabel(ctx, l.Repo, number, l.DoneLabel)
+	_ = l.Claimer.Release(ctx, l.Kind, number, true)
 }
 
 func (l *Lifecycle) successCleanupAddresser(ctx context.Context, prNumber int, reviewIDs []int) {
-	_ = l.GH.RemoveLabel(ctx, l.Repo, prNumber, l.LockLabel)
-	_ = l.GH.RemoveLabel(ctx, l.Repo, prNumber, l.QueueLabel)
-	_ = l.GH.AddLabel(ctx, l.Repo, prNumber, l.DoneLabel)
-
-	// Release address-lock + address-claim ts tags.
-	_ = l.Claimer.Release(ctx, claim.KindAddresser, prNumber, true)
-
-	// Write per-review markers.
+	// Order matters: write markers BEFORE flipping labels or releasing the
+	// lock. The detector's skip-guard holds while claude-address /
+	// claude-addressing are still on the PR. If we remove them before the
+	// markers are written, the detector sees the same reviews as
+	// unaddressed and re-queues the PR — and by the time the next dispatch
+	// snapshots, the markers HAVE been written, so snapshot returns empty
+	// and the container fails with CC_REVIEW_IDS="" in a loop.
+	markerSha := ""
+	if pr, err := l.GH.GetPR(ctx, l.Repo, prNumber); err == nil {
+		markerSha = pr.HeadRefOid
+	}
 	for _, id := range reviewIDs {
 		ref := fmt.Sprintf("refs/tags/cc-crew-addressed/pr-%d/%d", prNumber, id)
-		// Marker SHA: use the PR's current head SHA; fall back to empty if lookup fails.
-		markerSha := ""
-		if pr, err := l.GH.GetPR(ctx, l.Repo, prNumber); err == nil {
-			markerSha = pr.HeadRefOid
-		}
 		if err := l.GH.CreateRef(ctx, l.Repo, ref, markerSha); err != nil {
 			l.Log.Warn("addressed marker create failed", "pr", prNumber, "review_id", id, "err", err)
 		}
 	}
+	_ = l.GH.RemoveLabel(ctx, l.Repo, prNumber, l.LockLabel)
+	_ = l.GH.RemoveLabel(ctx, l.Repo, prNumber, l.QueueLabel)
+	_ = l.GH.AddLabel(ctx, l.Repo, prNumber, l.DoneLabel)
+	// Release address-lock + address-claim ts tags last.
+	_ = l.Claimer.Release(ctx, claim.KindAddresser, prNumber, true)
 }
 
 func (l *Lifecycle) failCleanup(ctx context.Context, number int) {
