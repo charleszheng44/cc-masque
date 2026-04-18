@@ -78,3 +78,37 @@ func contains(ss []string, v string) bool {
 	}
 	return false
 }
+
+func TestReviewerSuccessWritesRereviewedMarker(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "a", Name: "b"}
+	// Seed PR #42 with a known head SHA and existing reviewer claim.
+	f.PRs[42] = &github.PullRequest{
+		Number: 42, State: "open", HeadRefOid: "sha-abc123",
+		HeadRefName: "claude/issue-42", BaseRefName: "main",
+		Labels: []string{"claude-review", "claude-reviewing"},
+	}
+	f.Refs["refs/tags/review-lock/pr-42"] = "sha-abc123"
+	f.Refs["refs/tags/review-claim/pr-42/20260417T120000Z"] = "sha-abc123"
+
+	l := &Lifecycle{
+		Kind: claim.KindReviewer, Claimer: claim.New(f, repo), GH: f, Repo: repo,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-review",
+		LockLabel:  "claude-reviewing",
+		DoneLabel:  "claude-reviewed",
+	}
+	l.successCleanupReviewer(context.Background(), 42, "sha-abc123")
+
+	if _, ok := f.Refs["refs/tags/cc-crew-rereviewed/pr-42/sha-abc123"]; !ok {
+		t.Fatalf("cc-crew-rereviewed marker not created; refs = %v", keys(f.Refs))
+	}
+}
+
+func keys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
+}

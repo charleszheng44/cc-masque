@@ -52,6 +52,7 @@ func (l *Lifecycle) Dispatch(ctx context.Context, number int) {
 
 	branch := fmt.Sprintf("claude/issue-%d", number)
 	var wtPath string
+	var headSha string // only set in reviewer branch
 	if l.Kind == claim.KindImplementer {
 		p, err := l.WT.Add(ctx, branch)
 		if err != nil {
@@ -67,7 +68,7 @@ func (l *Lifecycle) Dispatch(ctx context.Context, number int) {
 			l.failCleanup(ctx, number)
 			return
 		}
-		headSha := pr.HeadRefOid
+		headSha = pr.HeadRefOid
 		if headSha == "" {
 			log.Error("PR head SHA is empty", "pr", number)
 			l.failCleanup(ctx, number)
@@ -94,7 +95,11 @@ func (l *Lifecycle) Dispatch(ctx context.Context, number int) {
 		return
 	}
 	if code == 0 {
-		l.successCleanup(ctx, number)
+		if l.Kind == claim.KindReviewer {
+			l.successCleanupReviewer(ctx, number, headSha)
+		} else {
+			l.successCleanup(ctx, number)
+		}
 	} else {
 		log.Warn("task exited non-zero", "code", code)
 		l.failCleanup(ctx, number)
@@ -164,24 +169,35 @@ func (l *Lifecycle) successCleanup(ctx context.Context, number int) {
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
 	_ = l.GH.AddLabel(ctx, l.Repo, number, l.DoneLabel)
 
-	if l.Kind == claim.KindImplementer {
-		// Do not delete the lock branch — PR references it.
-		_ = l.Claimer.Release(ctx, l.Kind, number, false)
-		if l.AutoReview {
-			branch := fmt.Sprintf("claude/issue-%d", number)
-			prs, err := l.GH.ListPRs(ctx, l.Repo, nil, nil)
-			if err == nil {
-				for _, p := range prs {
-					if p.HeadRefName == branch {
-						_ = l.GH.AddLabel(ctx, l.Repo, p.Number, l.ReviewLabel)
-						break
-					}
+	// Implementer: keep the lock branch (PR references it).
+	_ = l.Claimer.Release(ctx, l.Kind, number, false)
+	if l.AutoReview {
+		branch := fmt.Sprintf("claude/issue-%d", number)
+		prs, err := l.GH.ListPRs(ctx, l.Repo, nil, nil)
+		if err == nil {
+			for _, p := range prs {
+				if p.HeadRefName == branch {
+					_ = l.GH.AddLabel(ctx, l.Repo, p.Number, l.ReviewLabel)
+					break
 				}
 			}
 		}
-	} else {
-		// Reviewer: drop lock tag + all timestamp tags.
-		_ = l.Claimer.Release(ctx, l.Kind, number, true)
+	}
+}
+
+func (l *Lifecycle) successCleanupReviewer(ctx context.Context, number int, headSha string) {
+	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
+	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
+	_ = l.GH.AddLabel(ctx, l.Repo, number, l.DoneLabel)
+	_ = l.Claimer.Release(ctx, l.Kind, number, true)
+
+	// Mark this head SHA as reviewed so the continuous detector doesn't
+	// re-queue it. Best-effort: a failure only delays re-review detection.
+	if headSha != "" {
+		ref := fmt.Sprintf("refs/tags/cc-crew-rereviewed/pr-%d/%s", number, headSha)
+		if err := l.GH.CreateRef(ctx, l.Repo, ref, headSha); err != nil {
+			l.Log.Warn("rereviewed marker create failed", "pr", number, "sha", headSha, "err", err)
+		}
 	}
 }
 
