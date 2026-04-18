@@ -18,6 +18,10 @@ var refPrefixes = []string{
 	"tags/claim/issue-",
 	"tags/review-lock/pr-",
 	"tags/review-claim/pr-",
+	"tags/address-lock/pr-",
+	"tags/address-claim/pr-",
+	"tags/cc-crew-addressed/pr-",
+	"tags/cc-crew-rereviewed/pr-",
 }
 
 type Plan struct {
@@ -39,6 +43,9 @@ type Options struct {
 	ReviewLabel     string
 	ReviewingLabel  string
 	ReviewedLabel   string
+	AddressLabel    string
+	AddressingLabel string
+	AddressedLabel  string
 }
 
 // Compute builds a Plan without making any changes.
@@ -80,7 +87,7 @@ func Compute(ctx context.Context, o Options) (Plan, error) {
 			}
 		}
 	}
-	for _, label := range []string{o.ReviewingLabel, o.ReviewedLabel} {
+	for _, label := range []string{o.ReviewingLabel, o.ReviewedLabel, o.AddressingLabel, o.AddressedLabel} {
 		if label == "" {
 			continue
 		}
@@ -160,6 +167,15 @@ func Execute(ctx context.Context, o Options, p Plan, out io.Writer) error {
 		_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.ReviewingLabel)
 		if o.ReviewedLabel != "" {
 			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.ReviewedLabel)
+		}
+		if o.AddressLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.AddressLabel)
+		}
+		if o.AddressingLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.AddressingLabel)
+		}
+		if o.AddressedLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.AddressedLabel)
 		}
 		_ = o.GH.AddLabel(ctx, o.Repo, n, o.ReviewLabel)
 	}

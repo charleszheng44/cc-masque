@@ -49,6 +49,9 @@ func runReset(args []string) int {
 		ReviewLabel:     firstNonEmpty(os.Getenv("CC_REVIEW_LABEL"), defaults.ReviewLabel),
 		ReviewingLabel:  firstNonEmpty(os.Getenv("CC_REVIEWING_LABEL"), defaults.ReviewingLabel),
 		ReviewedLabel:   firstNonEmpty(os.Getenv("CC_REVIEWED_LABEL"), defaults.ReviewedLabel),
+		AddressLabel:    firstNonEmpty(os.Getenv("CC_ADDRESS_LABEL"), defaults.AddressLabel),
+		AddressingLabel: firstNonEmpty(os.Getenv("CC_ADDRESSING_LABEL"), defaults.AddressingLabel),
+		AddressedLabel:  firstNonEmpty(os.Getenv("CC_ADDRESSED_LABEL"), defaults.AddressedLabel),
 	}
 	plan, err := reset.Compute(ctx, o)
 	if err != nil {

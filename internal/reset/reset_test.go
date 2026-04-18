@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"os/exec"
+	"strings"
 	"testing"
 
 	"github.com/charleszheng44/cc-crew/internal/docker"
@@ -155,4 +156,55 @@ func hasLabel(ss []string, v string) bool {
 		}
 	}
 	return false
+}
+
+func TestResetRemovesAddresserLabelsAndRefs(t *testing.T) {
+	f := github.NewFake()
+	r := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[88] = &github.PullRequest{
+		Number: 88, State: "open", HeadRefName: "claude/issue-88",
+		HeadRefOid: "sha",
+		Labels:     []string{"claude-address", "claude-addressing", "claude-addressed"},
+	}
+	f.Refs["refs/tags/address-lock/pr-88"] = "sha"
+	f.Refs["refs/tags/address-claim/pr-88/20260417T120000Z"] = "sha"
+	f.Refs["refs/tags/cc-crew-addressed/pr-88/900"] = "sha"
+	f.Refs["refs/tags/cc-crew-addressed/pr-88/901"] = "sha"
+	f.Refs["refs/tags/cc-crew-rereviewed/pr-88/sha"] = "sha"
+
+	repoDir := t.TempDir()
+	if err := exec.Command("git", "-C", repoDir, "init", "-q").Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	wt := worktree.New(repoDir)
+	dr := docker.New()
+	o := Options{
+		GH: f, Docker: dr, WT: wt, Repo: r,
+		TaskLabel: "claude-task", ProcessingLabel: "claude-processing", DoneLabel: "claude-done",
+		ReviewLabel: "claude-review", ReviewingLabel: "claude-reviewing", ReviewedLabel: "claude-reviewed",
+		AddressLabel: "claude-address", AddressingLabel: "claude-addressing", AddressedLabel: "claude-addressed",
+	}
+	p, err := Compute(context.Background(), o)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	var buf bytes.Buffer
+	if err := Execute(context.Background(), o, p, &buf); err != nil {
+		t.Logf("Execute error (likely from Prune on non-repo tmpdir): %v", err)
+	}
+
+	for ref := range f.Refs {
+		if strings.HasPrefix(ref, "refs/tags/address-lock/pr-88") ||
+			strings.HasPrefix(ref, "refs/tags/address-claim/pr-88/") ||
+			strings.HasPrefix(ref, "refs/tags/cc-crew-addressed/pr-88/") ||
+			strings.HasPrefix(ref, "refs/tags/cc-crew-rereviewed/pr-88/") {
+			t.Fatalf("address/marker ref not cleaned: %s", ref)
+		}
+	}
+	lbls := f.PRs[88].Labels
+	if hasLabel(lbls, "claude-address") ||
+		hasLabel(lbls, "claude-addressing") ||
+		hasLabel(lbls, "claude-addressed") {
+		t.Fatalf("addresser labels still present: %v", lbls)
+	}
 }
