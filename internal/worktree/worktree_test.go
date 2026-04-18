@@ -84,6 +84,59 @@ func TestAddDetached(t *testing.T) {
 	}
 }
 
+// TestAddForceSyncsLocalBranchToOrigin reproduces the scenario where a
+// previous dispatch's local branch is stale compared to origin (e.g. the
+// remote ref was reset back to main after orchestrator reset). Manager.Add
+// must force-sync local refs/heads/<branch> from origin, or the subsequent
+// worktree would check out the stale local state and any new commits
+// would layer on top of it when pushed.
+func TestAddForceSyncsLocalBranchToOrigin(t *testing.T) {
+	clone := makeRepo(t)
+	m := New(clone)
+	ctx := context.Background()
+
+	// 1. Initial Add — local branch gets populated at whatever origin had.
+	if _, err := m.Add(ctx, "claude/issue-42"); err != nil {
+		t.Fatalf("first Add: %v", err)
+	}
+	// Remove the worktree so the local branch ref is free for a forced update.
+	if err := m.Remove(ctx, "claude/issue-42"); err != nil {
+		t.Fatal(err)
+	}
+
+	// 2. Simulate "reset then recreate" — reset origin/claude/issue-42 to
+	//    main's SHA (discarding the old `work` commit). In real cc-crew
+	//    this is what `reset` + a new TryClaim does.
+	origin := filepath.Join(filepath.Dir(clone), "origin.git")
+	mainSHA := func() string {
+		cmd := exec.Command("git", "rev-parse", "main")
+		cmd.Dir = origin
+		out, err := cmd.Output()
+		if err != nil {
+			t.Fatalf("rev-parse main: %v", err)
+		}
+		return strings.TrimSpace(string(out))
+	}()
+	mustRun(t, origin, "git", "update-ref", "refs/heads/claude/issue-42", mainSHA)
+
+	// 3. Second Add — should force-sync local to origin (= mainSHA).
+	p, err := m.Add(ctx, "claude/issue-42")
+	if err != nil {
+		t.Fatalf("second Add: %v", err)
+	}
+
+	// 4. HEAD of the worktree should now be mainSHA, not the stale `work` commit.
+	headCmd := exec.Command("git", "rev-parse", "HEAD")
+	headCmd.Dir = p
+	out, err := headCmd.Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD in worktree: %v", err)
+	}
+	if got := strings.TrimSpace(string(out)); got != mainSHA {
+		t.Fatalf("worktree HEAD = %s, want mainSHA %s (stale local branch not force-synced)", got, mainSHA)
+	}
+}
+
 func TestAddRemove(t *testing.T) {
 	clone := makeRepo(t)
 	m := New(clone)
