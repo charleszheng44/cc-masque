@@ -88,8 +88,11 @@ func (c *ghClient) CreateLabel(ctx context.Context, r Repo, name, color, desc st
 
 ### 5.2 `FakeClient` implementation (`internal/github/fake.go`)
 
-Add a `Labels map[string]struct{}` field, initialize in `NewFake`, and
-implement `CreateLabel` to return `ErrLabelExists` on duplicate insertion.
+Add a `Labels map[string]struct{}` field (initialized in `NewFake`) and a
+`CreateLabelHook func(name string) error` field alongside the existing
+`CreateRefHook`/`DeleteRefHook`. `CreateLabel` invokes the hook (if set)
+before the duplicate check, so tests can force arbitrary errors on
+specific calls; it returns `ErrLabelExists` on duplicate insertion.
 
 ## 6. Label catalog
 
