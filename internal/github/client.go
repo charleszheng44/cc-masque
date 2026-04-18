@@ -31,6 +31,7 @@ type Client interface {
 	// Labels
 	AddLabel(ctx context.Context, r Repo, issueOrPRNumber int, label string) error
 	RemoveLabel(ctx context.Context, r Repo, issueOrPRNumber int, label string) error
+	CreateLabel(ctx context.Context, r Repo, name, color, description string) error // returns ErrLabelExists on 422 already_exists
 
 	// Refs (via git/refs API)
 	CreateRef(ctx context.Context, r Repo, ref string, sha string) error // returns ErrRefExists on 422
