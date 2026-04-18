@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"io"
 	"sort"
+	"strconv"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -22,9 +24,19 @@ type Item struct {
 	ClaimAge     time.Duration
 }
 
+type ContinuousItem struct {
+	PRNumber          int
+	HeadSHA           string
+	LastRereviewedSHA string
+	AddressedCycles   int
+	MaxCycles         int
+	PendingReviews    int
+}
+
 type Snapshot struct {
 	Implementers []Item
 	Reviewers    []Item
+	Continuous   []ContinuousItem
 }
 
 type Options struct {
@@ -38,6 +50,9 @@ type Options struct {
 	ReviewingLabel  string
 
 	Now func() time.Time
+
+	ContinuousEnabled bool
+	MaxCycles         int
 }
 
 func Fetch(ctx context.Context, o Options) (Snapshot, error) {
@@ -91,36 +106,87 @@ func Fetch(ctx context.Context, o Options) (Snapshot, error) {
 		}
 	}
 
-	entries, err := o.Docker.PS(ctx, map[string]string{"cc-crew.repo": o.Repo.String()})
-	if err == nil {
-		for _, e := range entries {
-			num := 0
-			if v := e.Labels["cc-crew.issue"]; v != "" {
-				fmt.Sscanf(v, "%d", &num)
-			}
-			if num == 0 {
-				if v := e.Labels["cc-crew.pr"]; v != "" {
+	if o.Docker != nil {
+		entries, err := o.Docker.PS(ctx, map[string]string{"cc-crew.repo": o.Repo.String()})
+		if err == nil {
+			for _, e := range entries {
+				num := 0
+				if v := e.Labels["cc-crew.issue"]; v != "" {
 					fmt.Sscanf(v, "%d", &num)
 				}
-			}
-			if num == 0 {
-				continue
-			}
-			role := e.Labels["cc-crew.role"]
-			if role == "implementer" {
-				for i := range s.Implementers {
-					if s.Implementers[i].Number == num {
-						s.Implementers[i].State = "running"
+				if num == 0 {
+					if v := e.Labels["cc-crew.pr"]; v != "" {
+						fmt.Sscanf(v, "%d", &num)
 					}
 				}
-			} else if role == "reviewer" {
-				for i := range s.Reviewers {
-					if s.Reviewers[i].Number == num {
-						s.Reviewers[i].State = "running"
+				if num == 0 {
+					continue
+				}
+				role := e.Labels["cc-crew.role"]
+				if role == "implementer" {
+					for i := range s.Implementers {
+						if s.Implementers[i].Number == num {
+							s.Implementers[i].State = "running"
+						}
+					}
+				} else if role == "reviewer" {
+					for i := range s.Reviewers {
+						if s.Reviewers[i].Number == num {
+							s.Reviewers[i].State = "running"
+						}
 					}
 				}
 			}
 		}
+	}
+
+	if o.ContinuousEnabled {
+		allPRs, err := o.GH.ListPRs(ctx, o.Repo, nil, nil)
+		if err != nil {
+			return s, err
+		}
+		for _, pr := range allPRs {
+			if pr.State != "open" || !strings.HasPrefix(pr.HeadRefName, "claude/issue-") {
+				continue
+			}
+			item := ContinuousItem{
+				PRNumber:  pr.Number,
+				HeadSHA:   pr.HeadRefOid,
+				MaxCycles: o.MaxCycles,
+			}
+
+			rRefs, _ := o.GH.ListMatchingRefs(ctx, o.Repo, fmt.Sprintf("tags/cc-crew-rereviewed/pr-%d/", pr.Number))
+			for _, rr := range rRefs {
+				parts := strings.Split(rr.Name, "/")
+				if len(parts) > 0 {
+					item.LastRereviewedSHA = parts[len(parts)-1]
+				}
+			}
+			aRefs, _ := o.GH.ListMatchingRefs(ctx, o.Repo, fmt.Sprintf("tags/cc-crew-addressed/pr-%d/", pr.Number))
+			item.AddressedCycles = len(aRefs)
+
+			reviews, _ := o.GH.ListReviews(ctx, o.Repo, pr.Number)
+			addressed := map[int]bool{}
+			for _, r := range aRefs {
+				parts := strings.Split(r.Name, "/")
+				if len(parts) == 0 {
+					continue
+				}
+				if id, err := strconv.Atoi(parts[len(parts)-1]); err == nil {
+					addressed[id] = true
+				}
+			}
+			for _, rv := range reviews {
+				if (rv.State == "COMMENTED" || rv.State == "CHANGES_REQUESTED") && !addressed[rv.ID] {
+					item.PendingReviews++
+				}
+			}
+
+			s.Continuous = append(s.Continuous, item)
+		}
+		sort.Slice(s.Continuous, func(i, j int) bool {
+			return s.Continuous[i].PRNumber < s.Continuous[j].PRNumber
+		})
 	}
 
 	sortItems(s.Implementers)
@@ -151,6 +217,21 @@ func Render(w io.Writer, s Snapshot) {
 		fmt.Fprintf(tw, "reviewer\t#%d\t%s\t%s\t%s\n", it.Number, it.State, fmtAge(it.ClaimAge), it.Title)
 	}
 	tw.Flush()
+
+	if len(s.Continuous) > 0 {
+		fmt.Fprintln(w)
+		tw2 := tabwriter.NewWriter(w, 2, 2, 2, ' ', 0)
+		fmt.Fprintln(tw2, "CONTINUOUS-PR\tHEAD\tLAST-REREVIEWED\tCYCLES\tPENDING")
+		for _, c := range s.Continuous {
+			rev := c.LastRereviewedSHA
+			if rev == "" {
+				rev = "-"
+			}
+			fmt.Fprintf(tw2, "#%d\t%s\t%s\t%d/%d\t%d\n",
+				c.PRNumber, short(c.HeadSHA), short(rev), c.AddressedCycles, c.MaxCycles, c.PendingReviews)
+		}
+		tw2.Flush()
+	}
 }
 
 func fmtAge(d time.Duration) string {
@@ -158,4 +239,11 @@ func fmtAge(d time.Duration) string {
 		return "-"
 	}
 	return d.Truncate(time.Second).String()
+}
+
+func short(sha string) string {
+	if len(sha) > 8 {
+		return sha[:8]
+	}
+	return sha
 }
