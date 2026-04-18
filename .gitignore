@@ -1,0 +1,5 @@
+.worktrees/
+/cc-crew
+.claude-worktrees/
+*.test
+/cover.out

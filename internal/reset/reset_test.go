@@ -1,0 +1,158 @@
+package reset
+
+import (
+	"bytes"
+	"context"
+	"os/exec"
+	"testing"
+
+	"github.com/charleszheng44/cc-crew/internal/docker"
+	"github.com/charleszheng44/cc-crew/internal/github"
+	"github.com/charleszheng44/cc-crew/internal/worktree"
+)
+
+func TestExecuteRequeuesOpenIssuesAndPRs(t *testing.T) {
+	f := github.NewFake()
+	r := github.Repo{Owner: "a", Name: "b"}
+	f.Issues[10] = &github.Issue{Number: 10, State: "open", Labels: []string{"claude-processing", "claude-done"}}
+	f.PRs[20] = &github.PullRequest{Number: 20, State: "open", Labels: []string{"claude-reviewing", "claude-reviewed"}}
+	f.Refs["refs/heads/claude/issue-10"] = "s1"
+	f.Refs["refs/tags/claim/issue-10/20260417T120000Z"] = "s1"
+	f.Refs["refs/tags/review-lock/pr-20"] = "s2"
+	f.Refs["refs/tags/review-claim/pr-20/20260417T120000Z"] = "s2"
+
+	wt := worktree.New(t.TempDir())
+	dr := docker.New()
+
+	o := Options{
+		GH: f, Docker: dr, WT: wt, Repo: r,
+		TaskLabel: "claude-task", ProcessingLabel: "claude-processing", DoneLabel: "claude-done",
+		ReviewLabel: "claude-review", ReviewingLabel: "claude-reviewing", ReviewedLabel: "claude-reviewed",
+	}
+	plan := Plan{
+		ImplementerIssues: []int{10},
+		ReviewerPRs:       []int{20},
+		Refs: []string{
+			"refs/heads/claude/issue-10",
+			"refs/tags/claim/issue-10/20260417T120000Z",
+			"refs/tags/review-lock/pr-20",
+			"refs/tags/review-claim/pr-20/20260417T120000Z",
+		},
+	}
+	var buf bytes.Buffer
+	if err := Execute(context.Background(), o, plan, &buf); err != nil {
+		// WT.Prune will fail because t.TempDir() isn't a git repo; ignore that
+		// and check the label/ref state regardless.
+		t.Logf("Execute error (likely from Prune on non-repo tmpdir): %v", err)
+	}
+	if _, ok := f.Refs["refs/heads/claude/issue-10"]; ok {
+		t.Fatal("ref should be deleted")
+	}
+	i := f.Issues[10]
+	if !hasLabel(i.Labels, "claude-task") ||
+		hasLabel(i.Labels, "claude-processing") ||
+		hasLabel(i.Labels, "claude-done") {
+		t.Fatalf("issue labels not restored: %v", i.Labels)
+	}
+	p := f.PRs[20]
+	if !hasLabel(p.Labels, "claude-review") ||
+		hasLabel(p.Labels, "claude-reviewing") ||
+		hasLabel(p.Labels, "claude-reviewed") {
+		t.Fatalf("PR labels not restored: %v", p.Labels)
+	}
+}
+
+func TestComputePicksUpOrphanLockLabels(t *testing.T) {
+	// Issue #11 has claude-processing but no ref (orphaned label). Reset must
+	// still include it so the label gets cleared.
+	f := github.NewFake()
+	r := github.Repo{Owner: "a", Name: "b"}
+	f.Issues[11] = &github.Issue{Number: 11, State: "open", Labels: []string{"claude-processing"}}
+	f.PRs[22] = &github.PullRequest{Number: 22, State: "open", Labels: []string{"claude-reviewing"}}
+
+	repoDir := t.TempDir()
+	if err := exec.Command("git", "-C", repoDir, "init", "-q").Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	wt := worktree.New(repoDir)
+	dr := docker.New()
+	o := Options{
+		GH: f, Docker: dr, WT: wt, Repo: r,
+		TaskLabel: "claude-task", ProcessingLabel: "claude-processing", DoneLabel: "claude-done",
+		ReviewLabel: "claude-review", ReviewingLabel: "claude-reviewing", ReviewedLabel: "claude-reviewed",
+	}
+	p, err := Compute(context.Background(), o)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if !containsInt(p.ImplementerIssues, 11) {
+		t.Fatalf("orphan-labeled issue not picked up: %+v", p.ImplementerIssues)
+	}
+	if !containsInt(p.ReviewerPRs, 22) {
+		t.Fatalf("orphan-labeled PR not picked up: %+v", p.ReviewerPRs)
+	}
+
+	var buf bytes.Buffer
+	if err := Execute(context.Background(), o, p, &buf); err != nil {
+		t.Logf("Execute error (likely from Prune on non-repo tmpdir): %v", err)
+	}
+	if hasLabel(f.Issues[11].Labels, "claude-processing") ||
+		!hasLabel(f.Issues[11].Labels, "claude-task") {
+		t.Fatalf("issue #11 labels not restored: %v", f.Issues[11].Labels)
+	}
+	if hasLabel(f.PRs[22].Labels, "claude-reviewing") ||
+		!hasLabel(f.PRs[22].Labels, "claude-review") {
+		t.Fatalf("PR #22 labels not restored: %v", f.PRs[22].Labels)
+	}
+}
+
+func TestComputePicksUpOrphanDoneLabels(t *testing.T) {
+	// Issue has claude-done (and claude-task) but no ref — the lock branch
+	// was manually deleted. Reset must still pick it up to clear claude-done.
+	f := github.NewFake()
+	r := github.Repo{Owner: "a", Name: "b"}
+	f.Issues[35] = &github.Issue{Number: 35, State: "open", Labels: []string{"claude-task", "claude-done"}}
+	f.PRs[40] = &github.PullRequest{Number: 40, State: "open", Labels: []string{"claude-review", "claude-reviewed"}}
+
+	repoDir := t.TempDir()
+	if err := exec.Command("git", "-C", repoDir, "init", "-q").Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+	wt := worktree.New(repoDir)
+	dr := docker.New()
+	o := Options{
+		GH: f, Docker: dr, WT: wt, Repo: r,
+		TaskLabel: "claude-task", ProcessingLabel: "claude-processing", DoneLabel: "claude-done",
+		ReviewLabel: "claude-review", ReviewingLabel: "claude-reviewing", ReviewedLabel: "claude-reviewed",
+	}
+	p, err := Compute(context.Background(), o)
+	if err != nil {
+		t.Fatalf("Compute: %v", err)
+	}
+	if !containsInt(p.ImplementerIssues, 35) {
+		t.Fatalf("done-labeled issue not picked up: %+v", p.ImplementerIssues)
+	}
+	if !containsInt(p.ReviewerPRs, 40) {
+		t.Fatalf("reviewed-labeled PR not picked up: %+v", p.ReviewerPRs)
+	}
+
+	var buf bytes.Buffer
+	if err := Execute(context.Background(), o, p, &buf); err != nil {
+		t.Logf("Execute error (likely from Prune on non-repo tmpdir): %v", err)
+	}
+	if hasLabel(f.Issues[35].Labels, "claude-done") {
+		t.Fatalf("claude-done not cleared: %v", f.Issues[35].Labels)
+	}
+	if hasLabel(f.PRs[40].Labels, "claude-reviewed") {
+		t.Fatalf("claude-reviewed not cleared: %v", f.PRs[40].Labels)
+	}
+}
+
+func hasLabel(ss []string, v string) bool {
+	for _, s := range ss {
+		if s == v {
+			return true
+		}
+	}
+	return false
+}

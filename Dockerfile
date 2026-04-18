@@ -10,7 +10,17 @@ ENV SHELL=/bin/bash
 RUN printf '%s' '{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true,"theme":"dark"}' \
     > /root/.claude.json
 
+COPY scripts/cc-crew-run /usr/local/bin/cc-crew-run
+RUN chmod +x /usr/local/bin/cc-crew-run
+
+# Bake personas into the image so cc-crew-run can install the right
+# CLAUDE.md (and settings.json) for $CC_ROLE at container start.
+COPY personas /etc/cc-crew/personas
+
 WORKDIR /workspace
 
-# Keep the container alive so `docker exec` can send commands into it.
+# If CC_ROLE is set, run the cc-crew entrypoint (dispatched by the
+# orchestrator). Otherwise, keep the container alive with `tail -f`
+# for manual `docker exec` workflows (matches pre-cc-crew behaviour).
+ENTRYPOINT ["/bin/sh", "-c", "if [ -n \"${CC_ROLE:-}\" ]; then exec /usr/local/bin/cc-crew-run; else exec \"$@\"; fi", "--"]
 CMD ["tail", "-f", "/dev/null"]
