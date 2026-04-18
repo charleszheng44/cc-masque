@@ -27,6 +27,7 @@ type Ref struct {
 }
 
 type Review struct {
+	ID     int    // review ID from the GitHub API
 	Author string // login
 	State  string // COMMENTED, APPROVED, CHANGES_REQUESTED, DISMISSED
 	At     time.Time
