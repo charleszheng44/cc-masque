@@ -12,6 +12,7 @@ import (
 
 	"github.com/charleszheng44/cc-crew/internal/claim"
 	"github.com/charleszheng44/cc-crew/internal/config"
+	"github.com/charleszheng44/cc-crew/internal/continuous"
 	"github.com/charleszheng44/cc-crew/internal/docker"
 	"github.com/charleszheng44/cc-crew/internal/github"
 	"github.com/charleszheng44/cc-crew/internal/reclaim"
@@ -117,6 +118,29 @@ func runUp(args []string) int {
 		schedulers = append(schedulers, s)
 	}
 
+	if c.MaxImplementers > 0 {
+		addr := &scheduler.Lifecycle{
+			Kind: claim.KindAddresser, Claimer: claimer, GH: ghc, Repo: repo,
+			WT: wt, Docker: dr, Log: log,
+			QueueLabel:  c.AddressLabel,
+			LockLabel:   c.AddressingLabel,
+			DoneLabel:   c.AddressedLabel,
+			Image:       c.Image,
+			Model:       c.Model,
+			MaxTurns:    c.ImplMaxTurns,
+			TaskTimeout: c.ImplTaskTimeout,
+			RoleGHToken: c.ImplementerGHToken, ClaudeOAuth: c.ClaudeOAuthToken, AnthropicAPIKey: c.AnthropicAPIKey,
+			GitName: c.ImplementerGitName, GitEmail: c.ImplementerGitEmail,
+			BaseBranch: c.BaseBranch,
+		}
+		addrSched := &scheduler.Scheduler{
+			Kind: claim.KindAddresser, Sem: schedulers[0].Sem, // REUSE implementer semaphore
+			Claimer: claimer, GH: ghc, Repo: repo, Dispatcher: addr, Log: log,
+			QueueLabel: c.AddressLabel, LockLabel: c.AddressingLabel,
+		}
+		schedulers = append(schedulers, addrSched)
+	}
+
 	implSweeper := &reclaim.Sweeper{
 		GH: ghc, Repo: repo, Claimer: claimer,
 		Kind:   claim.KindImplementer,
@@ -131,6 +155,15 @@ func runUp(args []string) int {
 		IsDone: reclaim.ReviewerDoneFn(ghc, repo, reviewerLogin),
 		Now:    time.Now,
 	}
+	addrSweeper := &reclaim.Sweeper{
+		GH: ghc, Repo: repo, Claimer: claimer,
+		Kind:   claim.KindAddresser,
+		MaxAge: c.ReclaimAfter,
+		// Addresser has no "already-done" short-circuit; a stale lock just means
+		// the dispatch crashed. Always reap.
+		IsDone: func(ctx context.Context, n int) (bool, error) { return false, nil },
+		Now:    time.Now,
+	}
 
 	go func() {
 		t := time.NewTicker(c.PollInterval)
@@ -141,6 +174,26 @@ func runUp(args []string) int {
 			}
 			if err := revSweeper.Sweep(ctx); err != nil {
 				log.Warn("rev reclaim", "err", err)
+			}
+			if err := addrSweeper.Sweep(ctx); err != nil {
+				log.Warn("addr reclaim", "err", err)
+			}
+			if c.Continuous {
+				res, err := continuous.Detect(ctx, continuous.Options{
+					GH: ghc, Repo: repo, MaxCycles: c.MaxCycles,
+					Labels: continuous.Labels{
+						Review:     c.ReviewLabel,
+						Reviewing:  c.ReviewingLabel,
+						Reviewed:   c.ReviewedLabel,
+						Address:    c.AddressLabel,
+						Addressing: c.AddressingLabel,
+					},
+				})
+				if err != nil {
+					log.Warn("continuous detect", "err", err)
+				} else if res.ReviewFlipped > 0 || res.AddressLabeled > 0 {
+					log.Info("continuous", "reviews_flipped", res.ReviewFlipped, "address_labeled", res.AddressLabeled)
+				}
 			}
 			for _, s := range schedulers {
 				if err := s.Tick(ctx); err != nil {
@@ -177,6 +230,21 @@ func runUp(args []string) int {
 		role := e.Labels["cc-crew.role"]
 		switch role {
 		case "implementer":
+			// Addresser runs as implementer; distinguish by cc-crew.mode.
+			if e.Labels["cc-crew.mode"] == "address" {
+				prStr := e.Labels["cc-crew.pr"]
+				var n int
+				if _, err := fmt.Sscan(prStr, &n); err != nil || n == 0 {
+					continue
+				}
+				if err := ghc.RemoveLabel(shutCtx, repo, n, c.AddressingLabel); err != nil {
+					log.Warn("sigint cleanup: remove addressing label", "pr", n, "err", err)
+				}
+				if err := claimer.Release(shutCtx, claim.KindAddresser, n, true); err != nil {
+					log.Warn("sigint cleanup: release addresser claim", "pr", n, "err", err)
+				}
+				continue
+			}
 			issueStr := e.Labels["cc-crew.issue"]
 			var n int
 			if _, err := fmt.Sscan(issueStr, &n); err != nil || n == 0 {
