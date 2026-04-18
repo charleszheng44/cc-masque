@@ -52,3 +52,19 @@ func TestValidateAllowsImplementerOnly(t *testing.T) {
 		t.Fatalf("should allow implementer-only: %v", err)
 	}
 }
+
+func TestDefaultsIncludeContinuousAndAddressLabels(t *testing.T) {
+	d := Defaults()
+	if d.MaxCycles != 3 {
+		t.Fatalf("MaxCycles = %d, want 3", d.MaxCycles)
+	}
+	if !d.Continuous {
+		t.Fatal("Continuous = false, want true")
+	}
+	if d.AddressLabel != "claude-address" ||
+		d.AddressingLabel != "claude-addressing" ||
+		d.AddressedLabel != "claude-addressed" {
+		t.Fatalf("address labels: %q %q %q",
+			d.AddressLabel, d.AddressingLabel, d.AddressedLabel)
+	}
+}
