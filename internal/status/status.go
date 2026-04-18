@@ -155,14 +155,14 @@ func Fetch(ctx context.Context, o Options) (Snapshot, error) {
 				MaxCycles: o.MaxCycles,
 			}
 
-			rRefs, _ := o.GH.ListMatchingRefs(ctx, o.Repo, fmt.Sprintf("tags/cc-crew-rereviewed/pr-%d/", pr.Number))
+			rRefs, _ := o.GH.ListMatchingRefs(ctx, o.Repo, fmt.Sprintf("cc-crew/rereviewed/pr-%d/", pr.Number))
 			for _, rr := range rRefs {
 				parts := strings.Split(rr.Name, "/")
 				if len(parts) > 0 {
 					item.LastRereviewedSHA = parts[len(parts)-1]
 				}
 			}
-			aRefs, _ := o.GH.ListMatchingRefs(ctx, o.Repo, fmt.Sprintf("tags/cc-crew-addressed/pr-%d/", pr.Number))
+			aRefs, _ := o.GH.ListMatchingRefs(ctx, o.Repo, fmt.Sprintf("cc-crew/addressed/pr-%d/", pr.Number))
 			item.AddressedCycles = len(aRefs)
 
 			reviews, _ := o.GH.ListReviews(ctx, o.Repo, pr.Number)

@@ -273,7 +273,7 @@ func (l *Lifecycle) snapshotUnaddressedReviews(ctx context.Context, prNumber int
 	if err != nil {
 		return nil, err
 	}
-	addressed, err := l.GH.ListMatchingRefs(ctx, l.Repo, fmt.Sprintf("tags/cc-crew-addressed/pr-%d/", prNumber))
+	addressed, err := l.GH.ListMatchingRefs(ctx, l.Repo, fmt.Sprintf("cc-crew/addressed/pr-%d/", prNumber))
 	if err != nil {
 		return nil, err
 	}
@@ -381,7 +381,7 @@ func (l *Lifecycle) successCleanupReviewer(ctx context.Context, number int, head
 	// window where the detector sees claude-reviewed present + no marker
 	// for the current head SHA, and flips the PR back to claude-review.
 	if headSha != "" {
-		ref := fmt.Sprintf("refs/tags/cc-crew-rereviewed/pr-%d/%s", number, headSha)
+		ref := fmt.Sprintf("refs/cc-crew/rereviewed/pr-%d/%s", number, headSha)
 		_ = l.createRefWithRetry(ctx, ref, headSha)
 	}
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
@@ -403,7 +403,7 @@ func (l *Lifecycle) successCleanupAddresser(ctx context.Context, prNumber int, r
 		markerSha = pr.HeadRefOid
 	}
 	for _, id := range reviewIDs {
-		ref := fmt.Sprintf("refs/tags/cc-crew-addressed/pr-%d/%d", prNumber, id)
+		ref := fmt.Sprintf("refs/cc-crew/addressed/pr-%d/%d", prNumber, id)
 		_ = l.createRefWithRetry(ctx, ref, markerSha)
 	}
 	_ = l.GH.RemoveLabel(ctx, l.Repo, prNumber, l.LockLabel)

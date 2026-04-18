@@ -22,7 +22,7 @@ type PullRequest struct {
 }
 
 type Ref struct {
-	Name string // e.g. "refs/heads/claude/issue-42" or "refs/tags/claim/issue-42/20260417T120000Z"
+	Name string // e.g. "refs/heads/claude/issue-42" or "refs/cc-crew/claim/issue-42/20260417T120000Z"
 	SHA  string
 }
 

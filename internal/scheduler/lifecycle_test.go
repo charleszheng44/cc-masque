@@ -17,7 +17,7 @@ func TestSuccessCleanupImplementer(t *testing.T) {
 	r := github.Repo{Owner: "a", Name: "b"}
 	f.Issues[42] = &github.Issue{Number: 42, State: "open", Labels: []string{"claude-task", "claude-processing"}}
 	f.Refs["refs/heads/claude/issue-42"] = "sha"
-	f.Refs["refs/tags/claim/issue-42/20260417T120000Z"] = "sha"
+	f.Refs["refs/cc-crew/claim/issue-42/20260417T120000Z"] = "sha"
 
 	c := claim.New(f, r)
 	c.Now = func() time.Time { return time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC) }
@@ -38,7 +38,7 @@ func TestSuccessCleanupImplementer(t *testing.T) {
 	if _, ok := f.Refs["refs/heads/claude/issue-42"]; !ok {
 		t.Fatal("lock branch should remain for PR reference")
 	}
-	if _, ok := f.Refs["refs/tags/claim/issue-42/20260417T120000Z"]; ok {
+	if _, ok := f.Refs["refs/cc-crew/claim/issue-42/20260417T120000Z"]; ok {
 		t.Fatal("timestamp tag should be cleared")
 	}
 }
@@ -48,7 +48,7 @@ func TestFailCleanupDropsLockAndKeepsQueueLabel(t *testing.T) {
 	r := github.Repo{Owner: "a", Name: "b"}
 	f.Issues[42] = &github.Issue{Number: 42, State: "open", Labels: []string{"claude-task", "claude-processing"}}
 	f.Refs["refs/heads/claude/issue-42"] = "sha"
-	f.Refs["refs/tags/claim/issue-42/20260417T120000Z"] = "sha"
+	f.Refs["refs/cc-crew/claim/issue-42/20260417T120000Z"] = "sha"
 
 	c := claim.New(f, r)
 	c.Now = func() time.Time { return time.Date(2026, 4, 17, 12, 0, 0, 0, time.UTC) }
@@ -89,8 +89,8 @@ func TestReviewerSuccessWritesRereviewedMarker(t *testing.T) {
 		HeadRefName: "claude/issue-42", BaseRefName: "main",
 		Labels: []string{"claude-review", "claude-reviewing"},
 	}
-	f.Refs["refs/tags/review-lock/pr-42"] = "sha-abc123"
-	f.Refs["refs/tags/review-claim/pr-42/20260417T120000Z"] = "sha-abc123"
+	f.Refs["refs/cc-crew/review-lock/pr-42"] = "sha-abc123"
+	f.Refs["refs/cc-crew/review-claim/pr-42/20260417T120000Z"] = "sha-abc123"
 
 	l := &Lifecycle{
 		Kind: claim.KindReviewer, Claimer: claim.New(f, repo), GH: f, Repo: repo,
@@ -101,8 +101,8 @@ func TestReviewerSuccessWritesRereviewedMarker(t *testing.T) {
 	}
 	l.successCleanupReviewer(context.Background(), 42, "sha-abc123")
 
-	if _, ok := f.Refs["refs/tags/cc-crew-rereviewed/pr-42/sha-abc123"]; !ok {
-		t.Fatalf("cc-crew-rereviewed marker not created; refs = %v", keys(f.Refs))
+	if _, ok := f.Refs["refs/cc-crew/rereviewed/pr-42/sha-abc123"]; !ok {
+		t.Fatalf("rereviewed marker not created; refs = %v", keys(f.Refs))
 	}
 }
 
@@ -121,8 +121,8 @@ func TestAddresserSuccessWritesAddressedMarkers(t *testing.T) {
 		Number: 55, State: "open", HeadRefName: "claude/issue-55",
 		HeadRefOid: "sha-5", Labels: []string{"claude-address", "claude-addressing"},
 	}
-	f.Refs["refs/tags/address-lock/pr-55"] = "sha-5"
-	f.Refs["refs/tags/address-claim/pr-55/20260417T130000Z"] = "sha-5"
+	f.Refs["refs/cc-crew/address-lock/pr-55"] = "sha-5"
+	f.Refs["refs/cc-crew/address-claim/pr-55/20260417T130000Z"] = "sha-5"
 
 	l := &Lifecycle{
 		Kind: claim.KindAddresser, Claimer: claim.New(f, repo), GH: f, Repo: repo,
@@ -134,15 +134,15 @@ func TestAddresserSuccessWritesAddressedMarkers(t *testing.T) {
 	l.successCleanupAddresser(context.Background(), 55, []int{901, 902})
 
 	for _, id := range []int{901, 902} {
-		ref := fmt.Sprintf("refs/tags/cc-crew-addressed/pr-55/%d", id)
+		ref := fmt.Sprintf("refs/cc-crew/addressed/pr-55/%d", id)
 		if _, ok := f.Refs[ref]; !ok {
 			t.Fatalf("marker %s missing; refs = %v", ref, keys(f.Refs))
 		}
 	}
-	if _, ok := f.Refs["refs/tags/address-lock/pr-55"]; ok {
+	if _, ok := f.Refs["refs/cc-crew/address-lock/pr-55"]; ok {
 		t.Fatal("address-lock not released")
 	}
-	if _, ok := f.Refs["refs/tags/address-claim/pr-55/20260417T130000Z"]; ok {
+	if _, ok := f.Refs["refs/cc-crew/address-claim/pr-55/20260417T130000Z"]; ok {
 		t.Fatal("address-claim ts not released")
 	}
 	lbls := f.PRs[55].Labels
@@ -161,8 +161,8 @@ func TestAddresserFailLeavesQueueLabel(t *testing.T) {
 		Number: 56, State: "open", HeadRefName: "claude/issue-56",
 		HeadRefOid: "sha-6", Labels: []string{"claude-address", "claude-addressing"},
 	}
-	f.Refs["refs/tags/address-lock/pr-56"] = "sha-6"
-	f.Refs["refs/tags/address-claim/pr-56/20260417T130000Z"] = "sha-6"
+	f.Refs["refs/cc-crew/address-lock/pr-56"] = "sha-6"
+	f.Refs["refs/cc-crew/address-claim/pr-56/20260417T130000Z"] = "sha-6"
 
 	l := &Lifecycle{
 		Kind: claim.KindAddresser, Claimer: claim.New(f, repo), GH: f, Repo: repo,
@@ -173,7 +173,7 @@ func TestAddresserFailLeavesQueueLabel(t *testing.T) {
 	}
 	l.failCleanup(context.Background(), 56)
 
-	if _, ok := f.Refs["refs/tags/address-lock/pr-56"]; ok {
+	if _, ok := f.Refs["refs/cc-crew/address-lock/pr-56"]; ok {
 		t.Fatal("address-lock not released on fail")
 	}
 	lbls := f.PRs[56].Labels
@@ -199,11 +199,11 @@ func TestAddresserDispatchEmptySnapshotDropsLabel(t *testing.T) {
 	}
 	// Prior addresser's lock + claim tag (simulating the fresh claim by the
 	// scheduler that preceded this dispatch).
-	f.Refs["refs/tags/address-lock/pr-60"] = "sha-6"
-	f.Refs["refs/tags/address-claim/pr-60/20260417T130000Z"] = "sha-6"
-	// Review 501 exists and is already in cc-crew-addressed → snapshot = [].
+	f.Refs["refs/cc-crew/address-lock/pr-60"] = "sha-6"
+	f.Refs["refs/cc-crew/address-claim/pr-60/20260417T130000Z"] = "sha-6"
+	// Review 501 exists and is already in cc-crew/addressed → snapshot = [].
 	f.Reviews[60] = []github.Review{{ID: 501, State: "COMMENTED"}}
-	f.Refs["refs/tags/cc-crew-addressed/pr-60/501"] = "sha-6"
+	f.Refs["refs/cc-crew/addressed/pr-60/501"] = "sha-6"
 
 	l := &Lifecycle{
 		Kind: claim.KindAddresser, Claimer: claim.New(f, repo), GH: f, Repo: repo,
@@ -216,7 +216,7 @@ func TestAddresserDispatchEmptySnapshotDropsLabel(t *testing.T) {
 	}
 	l.dispatchAddresser(context.Background(), l.Log, 60)
 
-	if _, ok := f.Refs["refs/tags/address-lock/pr-60"]; ok {
+	if _, ok := f.Refs["refs/cc-crew/address-lock/pr-60"]; ok {
 		t.Fatalf("address-lock not released; refs = %v", keys(f.Refs))
 	}
 	lbls := f.PRs[60].Labels
@@ -244,8 +244,8 @@ func TestAddresserSuccessMarkersWrittenBeforeLabelsRemoved(t *testing.T) {
 		Number: 70, State: "open", HeadRefName: "claude/issue-70",
 		HeadRefOid: "sha-7", Labels: []string{"claude-address", "claude-addressing"},
 	}
-	f.Refs["refs/tags/address-lock/pr-70"] = "sha-7"
-	f.Refs["refs/tags/address-claim/pr-70/20260417T130000Z"] = "sha-7"
+	f.Refs["refs/cc-crew/address-lock/pr-70"] = "sha-7"
+	f.Refs["refs/cc-crew/address-claim/pr-70/20260417T130000Z"] = "sha-7"
 
 	l := &Lifecycle{
 		Kind: claim.KindAddresser, Claimer: claim.New(f, repo), GH: f, Repo: repo,
@@ -258,13 +258,13 @@ func TestAddresserSuccessMarkersWrittenBeforeLabelsRemoved(t *testing.T) {
 
 	// Both markers written.
 	for _, id := range []int{111, 222} {
-		ref := fmt.Sprintf("refs/tags/cc-crew-addressed/pr-70/%d", id)
+		ref := fmt.Sprintf("refs/cc-crew/addressed/pr-70/%d", id)
 		if _, ok := f.Refs[ref]; !ok {
 			t.Fatalf("marker %s not written (reorder regression?); refs=%v", ref, keys(f.Refs))
 		}
 	}
 	// Lock + claim dropped.
-	if _, ok := f.Refs["refs/tags/address-lock/pr-70"]; ok {
+	if _, ok := f.Refs["refs/cc-crew/address-lock/pr-70"]; ok {
 		t.Fatal("address-lock still present")
 	}
 	// Labels transitioned.
@@ -292,11 +292,11 @@ func TestAddresserGuardRetriesReleaseOnTransientFailure(t *testing.T) {
 		Number: 80, State: "open", HeadRefName: "claude/issue-80",
 		HeadRefOid: "sha", Labels: []string{"claude-address", "claude-addressing"},
 	}
-	f.Refs["refs/tags/address-lock/pr-80"] = "sha"
-	f.Refs["refs/tags/address-claim/pr-80/20260417T130000Z"] = "sha"
+	f.Refs["refs/cc-crew/address-lock/pr-80"] = "sha"
+	f.Refs["refs/cc-crew/address-claim/pr-80/20260417T130000Z"] = "sha"
 	// Review 501 is already addressed → snapshot returns empty → guard path.
 	f.Reviews[80] = []github.Review{{ID: 501, State: "COMMENTED"}}
-	f.Refs["refs/tags/cc-crew-addressed/pr-80/501"] = "sha"
+	f.Refs["refs/cc-crew/addressed/pr-80/501"] = "sha"
 
 	// Fail the first DeleteRef call, succeed after that.
 	failuresLeft := 1
@@ -317,7 +317,7 @@ func TestAddresserGuardRetriesReleaseOnTransientFailure(t *testing.T) {
 	}
 	l.dispatchAddresser(context.Background(), l.Log, 80)
 
-	if _, ok := f.Refs["refs/tags/address-lock/pr-80"]; ok {
+	if _, ok := f.Refs["refs/cc-crew/address-lock/pr-80"]; ok {
 		t.Fatalf("address-lock should be released after retry; refs=%v", keys(f.Refs))
 	}
 	lbls := f.PRs[80].Labels
@@ -340,10 +340,10 @@ func TestAddresserGuardKeepsLabelsIfReleaseFailsPermanently(t *testing.T) {
 		Number: 81, State: "open", HeadRefName: "claude/issue-81",
 		HeadRefOid: "sha", Labels: []string{"claude-address", "claude-addressing"},
 	}
-	f.Refs["refs/tags/address-lock/pr-81"] = "sha"
-	f.Refs["refs/tags/address-claim/pr-81/20260417T130000Z"] = "sha"
+	f.Refs["refs/cc-crew/address-lock/pr-81"] = "sha"
+	f.Refs["refs/cc-crew/address-claim/pr-81/20260417T130000Z"] = "sha"
 	f.Reviews[81] = []github.Review{{ID: 502, State: "COMMENTED"}}
-	f.Refs["refs/tags/cc-crew-addressed/pr-81/502"] = "sha"
+	f.Refs["refs/cc-crew/addressed/pr-81/502"] = "sha"
 
 	// All DeleteRef attempts fail — simulate a persistent outage.
 	f.DeleteRefHook = func(ref string) error { return fmt.Errorf("simulated persistent failure") }
@@ -358,7 +358,7 @@ func TestAddresserGuardKeepsLabelsIfReleaseFailsPermanently(t *testing.T) {
 	l.dispatchAddresser(context.Background(), l.Log, 81)
 
 	// Lock tag still present (release failed all attempts).
-	if _, ok := f.Refs["refs/tags/address-lock/pr-81"]; !ok {
+	if _, ok := f.Refs["refs/cc-crew/address-lock/pr-81"]; !ok {
 		t.Fatal("address-lock should still exist when Release fails")
 	}
 	// Labels preserved so reclaim sweeper sees a consistent in-progress state.

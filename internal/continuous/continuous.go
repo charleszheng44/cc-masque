@@ -82,7 +82,7 @@ func maybeFlipToReview(ctx context.Context, o Options, pr github.PullRequest) (b
 	if has(pr.Labels, o.Labels.Review) || has(pr.Labels, o.Labels.Reviewing) {
 		return false, nil
 	}
-	prefix := fmt.Sprintf("tags/cc-crew-rereviewed/pr-%d/", pr.Number)
+	prefix := fmt.Sprintf("cc-crew/rereviewed/pr-%d/", pr.Number)
 	refs, err := o.GH.ListMatchingRefs(ctx, o.Repo, prefix)
 	if err != nil {
 		return false, fmt.Errorf("continuous: list rereviewed refs pr-%d: %w", pr.Number, err)
@@ -137,7 +137,7 @@ func maybeLabelAddress(ctx context.Context, o Options, pr github.PullRequest) (b
 }
 
 func addressedReviewIDs(ctx context.Context, gh github.Client, repo github.Repo, pr int) (map[int]struct{}, error) {
-	prefix := fmt.Sprintf("tags/cc-crew-addressed/pr-%d/", pr)
+	prefix := fmt.Sprintf("cc-crew/addressed/pr-%d/", pr)
 	refs, err := gh.ListMatchingRefs(ctx, repo, prefix)
 	if err != nil {
 		return nil, fmt.Errorf("continuous: list addressed refs pr-%d: %w", pr, err)

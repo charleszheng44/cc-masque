@@ -25,7 +25,7 @@ func TestTryClaimWinsOnEmptyRepo(t *testing.T) {
 	if _, ok := f.Refs["refs/heads/claude/issue-42"]; !ok {
 		t.Fatal("lock branch not created")
 	}
-	if _, ok := f.Refs["refs/tags/claim/issue-42/20260417T120000Z"]; !ok {
+	if _, ok := f.Refs["refs/cc-crew/claim/issue-42/20260417T120000Z"]; !ok {
 		t.Fatal("timestamp tag not created")
 	}
 }
@@ -43,7 +43,7 @@ func TestTryClaimLosesWhenLockExists(t *testing.T) {
 		t.Fatal("should have lost")
 	}
 	// We should NOT have created a timestamp tag when we lost.
-	if _, ok := f.Refs["refs/tags/claim/issue-42/20260417T120000Z"]; ok {
+	if _, ok := f.Refs["refs/cc-crew/claim/issue-42/20260417T120000Z"]; ok {
 		t.Fatal("unexpected timestamp tag")
 	}
 }
@@ -51,12 +51,12 @@ func TestTryClaimLosesWhenLockExists(t *testing.T) {
 func TestReleaseDeletesTagsAndOptionallyLock(t *testing.T) {
 	f := github.NewFake()
 	f.Refs["refs/heads/claude/issue-42"] = "x"
-	f.Refs["refs/tags/claim/issue-42/20260417T120000Z"] = "x"
+	f.Refs["refs/cc-crew/claim/issue-42/20260417T120000Z"] = "x"
 	c := New(f, github.Repo{Owner: "a", Name: "b"})
 	if err := c.Release(context.Background(), KindImplementer, 42, false); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := f.Refs["refs/tags/claim/issue-42/20260417T120000Z"]; ok {
+	if _, ok := f.Refs["refs/cc-crew/claim/issue-42/20260417T120000Z"]; ok {
 		t.Fatal("timestamp tag should be gone")
 	}
 	if _, ok := f.Refs["refs/heads/claude/issue-42"]; !ok {
@@ -66,8 +66,8 @@ func TestReleaseDeletesTagsAndOptionallyLock(t *testing.T) {
 
 func TestOldestTagAge(t *testing.T) {
 	f := github.NewFake()
-	f.Refs["refs/tags/claim/issue-42/20260417T120000Z"] = "x"
-	f.Refs["refs/tags/claim/issue-42/20260417T120500Z"] = "x"
+	f.Refs["refs/cc-crew/claim/issue-42/20260417T120000Z"] = "x"
+	f.Refs["refs/cc-crew/claim/issue-42/20260417T120500Z"] = "x"
 	c := New(f, github.Repo{Owner: "a", Name: "b"})
 	c.Now = fixedNow(time.Date(2026, 4, 17, 12, 30, 0, 0, time.UTC))
 	age, ok, err := c.OldestTagAge(context.Background(), KindImplementer, 42)
@@ -84,11 +84,11 @@ func TestOldestTagAge(t *testing.T) {
 
 func TestPathsForAddresser(t *testing.T) {
 	p := PathsFor(KindAddresser, 42)
-	if p.LockRef != "refs/tags/address-lock/pr-42" {
+	if p.LockRef != "refs/cc-crew/address-lock/pr-42" {
 		t.Fatalf("LockRef = %q", p.LockRef)
 	}
-	if p.TagPrefix != "tags/address-claim/pr-42/" {
-		t.Fatalf("TagPrefix = %q", p.TagPrefix)
+	if p.RefPrefix != "cc-crew/address-claim/pr-42/" {
+		t.Fatalf("RefPrefix = %q", p.RefPrefix)
 	}
 }
 
@@ -102,11 +102,11 @@ func TestTryClaimAddresser(t *testing.T) {
 	if err != nil || !won {
 		t.Fatalf("first claim: won=%v err=%v", won, err)
 	}
-	if _, ok := f.Refs["refs/tags/address-lock/pr-42"]; !ok {
-		t.Fatal("address-lock tag not created")
+	if _, ok := f.Refs["refs/cc-crew/address-lock/pr-42"]; !ok {
+		t.Fatal("address-lock ref not created")
 	}
-	if _, ok := f.Refs["refs/tags/address-claim/pr-42/20260417T120000Z"]; !ok {
-		t.Fatal("address-claim timestamp tag not created")
+	if _, ok := f.Refs["refs/cc-crew/address-claim/pr-42/20260417T120000Z"]; !ok {
+		t.Fatal("address-claim timestamp ref not created")
 	}
 
 	// Second orchestrator racing — lose.

@@ -43,7 +43,7 @@ func TestDetectFlipsReviewedToReviewWhenHeadChanged(t *testing.T) {
 		Number: 10, State: "open", HeadRefName: "claude/issue-10",
 		HeadRefOid: "sha-new", Labels: []string{"claude-reviewed"},
 	}
-	f.Refs["refs/tags/cc-crew-rereviewed/pr-10/sha-old"] = "sha-old"
+	f.Refs["refs/cc-crew/rereviewed/pr-10/sha-old"] = "sha-old"
 
 	r, err := Detect(context.Background(), baseOpts(f))
 	if err != nil {
@@ -64,7 +64,7 @@ func TestDetectSkipsReviewFlipWhenAlreadyRereviewed(t *testing.T) {
 		Number: 11, State: "open", HeadRefName: "claude/issue-11",
 		HeadRefOid: "sha-same", Labels: []string{"claude-reviewed"},
 	}
-	f.Refs["refs/tags/cc-crew-rereviewed/pr-11/sha-same"] = "sha-same"
+	f.Refs["refs/cc-crew/rereviewed/pr-11/sha-same"] = "sha-same"
 
 	r, err := Detect(context.Background(), baseOpts(f))
 	if err != nil {
@@ -81,7 +81,7 @@ func TestDetectLabelsAddressOnUnaddressedReview(t *testing.T) {
 		Number: 20, State: "open", HeadRefName: "claude/issue-20",
 		HeadRefOid: "sha-z", Labels: []string{"claude-reviewed"},
 	}
-	f.Refs["refs/tags/cc-crew-rereviewed/pr-20/sha-z"] = "sha-z"
+	f.Refs["refs/cc-crew/rereviewed/pr-20/sha-z"] = "sha-z"
 	f.Reviews[20] = []github.Review{
 		{ID: 501, State: "CHANGES_REQUESTED"},
 	}
@@ -104,7 +104,7 @@ func TestDetectIgnoresApprovedAndDismissedReviews(t *testing.T) {
 		Number: 21, State: "open", HeadRefName: "claude/issue-21",
 		HeadRefOid: "sha", Labels: []string{"claude-reviewed"},
 	}
-	f.Refs["refs/tags/cc-crew-rereviewed/pr-21/sha"] = "sha"
+	f.Refs["refs/cc-crew/rereviewed/pr-21/sha"] = "sha"
 	f.Reviews[21] = []github.Review{
 		{ID: 1, State: "APPROVED"},
 		{ID: 2, State: "DISMISSED"},
@@ -125,11 +125,11 @@ func TestDetectSkipsAddressAtCycleCap(t *testing.T) {
 		Number: 30, State: "open", HeadRefName: "claude/issue-30",
 		HeadRefOid: "sha", Labels: []string{"claude-reviewed"},
 	}
-	f.Refs["refs/tags/cc-crew-rereviewed/pr-30/sha"] = "sha"
+	f.Refs["refs/cc-crew/rereviewed/pr-30/sha"] = "sha"
 	// Three addressed markers → at cap.
-	f.Refs["refs/tags/cc-crew-addressed/pr-30/100"] = "sha"
-	f.Refs["refs/tags/cc-crew-addressed/pr-30/101"] = "sha"
-	f.Refs["refs/tags/cc-crew-addressed/pr-30/102"] = "sha"
+	f.Refs["refs/cc-crew/addressed/pr-30/100"] = "sha"
+	f.Refs["refs/cc-crew/addressed/pr-30/101"] = "sha"
+	f.Refs["refs/cc-crew/addressed/pr-30/102"] = "sha"
 	f.Reviews[30] = []github.Review{{ID: 200, State: "CHANGES_REQUESTED"}}
 
 	r, err := Detect(context.Background(), baseOpts(f))
@@ -148,7 +148,7 @@ func TestDetectSkipsAddressWhenAlreadyLabeled(t *testing.T) {
 		HeadRefOid: "sha",
 		Labels:     []string{"claude-reviewed", "claude-address"}, // already queued
 	}
-	f.Refs["refs/tags/cc-crew-rereviewed/pr-40/sha"] = "sha"
+	f.Refs["refs/cc-crew/rereviewed/pr-40/sha"] = "sha"
 	f.Reviews[40] = []github.Review{{ID: 300, State: "COMMENTED"}}
 
 	r, err := Detect(context.Background(), baseOpts(f))

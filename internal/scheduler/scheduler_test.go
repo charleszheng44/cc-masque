@@ -121,7 +121,7 @@ func TestSchedulerAddresserListsAndClaims(t *testing.T) {
 	if len(got) != 1 || got[0] != 7 {
 		t.Fatalf("dispatched calls = %v, want [7]", got)
 	}
-	if _, ok := f.Refs["refs/tags/address-lock/pr-7"]; !ok {
+	if _, ok := f.Refs["refs/cc-crew/address-lock/pr-7"]; !ok {
 		t.Fatalf("address-lock not created; refs = %v", keys(f.Refs))
 	}
 }

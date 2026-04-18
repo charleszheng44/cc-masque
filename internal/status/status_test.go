@@ -29,8 +29,8 @@ func TestFetchContinuousSection(t *testing.T) {
 		HeadRefOid: "sha-new",
 		Labels:     []string{"claude-reviewed"},
 	}
-	f.Refs["refs/tags/cc-crew-rereviewed/pr-70/sha-old"] = "sha-old"
-	f.Refs["refs/tags/cc-crew-addressed/pr-70/500"] = "sha"
+	f.Refs["refs/cc-crew/rereviewed/pr-70/sha-old"] = "sha-old"
+	f.Refs["refs/cc-crew/addressed/pr-70/500"] = "sha"
 
 	o := Options{
 		GH: f, Docker: nil, Repo: repo,
