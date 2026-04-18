@@ -149,3 +149,43 @@ EOF`)
 		t.Fatalf("got %+v", got)
 	}
 }
+
+func TestCreateLabelSuccess(t *testing.T) {
+	bin := fakeBin(t, `exit 0`)
+	c := newGhClientWithBin(bin)
+	err := c.CreateLabel(context.Background(), Repo{Owner: "a", Name: "b"},
+		"claude-task", "1d76db", "Queue an issue for the implementer")
+	if err != nil {
+		t.Fatalf("want nil, got %v", err)
+	}
+}
+
+func TestCreateLabelDetects422AsErrLabelExists(t *testing.T) {
+	bin := fakeBin(t, `echo "HTTP 422: Validation Failed (already_exists)" 1>&2
+exit 1
+`)
+	c := newGhClientWithBin(bin)
+	err := c.CreateLabel(context.Background(), Repo{Owner: "a", Name: "b"},
+		"claude-task", "1d76db", "desc")
+	if err != ErrLabelExists {
+		t.Fatalf("want ErrLabelExists, got %v", err)
+	}
+}
+
+func TestCreateLabelDoesNotMapOtherErrorsToErrLabelExists(t *testing.T) {
+	bin := fakeBin(t, `echo "HTTP 403: Forbidden" 1>&2
+exit 1
+`)
+	c := newGhClientWithBin(bin)
+	err := c.CreateLabel(context.Background(), Repo{Owner: "a", Name: "b"},
+		"claude-task", "1d76db", "desc")
+	if err == nil {
+		t.Fatal("expected error on 403")
+	}
+	if err == ErrLabelExists {
+		t.Fatalf("must NOT map 403 to ErrLabelExists: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Forbidden") {
+		t.Fatalf("error should propagate stderr: %v", err)
+	}
+}

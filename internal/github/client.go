@@ -9,6 +9,11 @@ import (
 // "Reference already exists" — the caller lost the atomic claim race.
 var ErrRefExists = errors.New("github: ref already exists")
 
+// ErrLabelExists is returned by CreateLabel when GitHub responds with 422
+// "already_exists". Signals the caller that the label is already present
+// and no action is needed.
+var ErrLabelExists = errors.New("github: label already exists")
+
 // Client is the surface area the rest of cc-crew depends on.
 // Implementations: *ghClient (production), *FakeClient (tests).
 type Client interface {
