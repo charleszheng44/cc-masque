@@ -79,6 +79,8 @@ func (s *Sweeper) listLockRefs(ctx context.Context) ([]github.Ref, error) {
 		return s.GH.ListMatchingRefs(ctx, s.Repo, "heads/claude/issue-")
 	case claim.KindReviewer:
 		return s.GH.ListMatchingRefs(ctx, s.Repo, "tags/review-lock/pr-")
+	case claim.KindAddresser:
+		return s.GH.ListMatchingRefs(ctx, s.Repo, "tags/address-lock/pr-")
 	}
 	return nil, fmt.Errorf("unknown kind %d", s.Kind)
 }
@@ -90,6 +92,8 @@ func parseNumber(refName string, k claim.Kind) (int, bool) {
 		prefix = "refs/heads/claude/issue-"
 	case claim.KindReviewer:
 		prefix = "refs/tags/review-lock/pr-"
+	case claim.KindAddresser:
+		prefix = "refs/tags/address-lock/pr-"
 	}
 	s := strings.TrimPrefix(refName, prefix)
 	if s == refName {

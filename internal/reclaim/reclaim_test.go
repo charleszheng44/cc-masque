@@ -84,3 +84,25 @@ func TestSweepSkipsAlreadyDone(t *testing.T) {
 		t.Fatal("lock should be preserved — work is already done")
 	}
 }
+
+func TestSweeperReapsStaleAddresserLock(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "a", Name: "b"}
+	old := time.Now().Add(-35 * time.Minute).UTC().Format(claim.TimestampFormat)
+	f.Refs["refs/tags/address-lock/pr-99"] = "sha"
+	f.Refs["refs/tags/address-claim/pr-99/"+old] = "sha"
+
+	sw := &Sweeper{
+		GH: f, Repo: repo, Claimer: claim.New(f, repo),
+		Kind:   claim.KindAddresser,
+		MaxAge: 30 * time.Minute,
+		IsDone: func(ctx context.Context, n int) (bool, error) { return false, nil },
+		Now:    time.Now,
+	}
+	if err := sw.Sweep(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := f.Refs["refs/tags/address-lock/pr-99"]; ok {
+		t.Fatalf("stale address-lock not reaped; remaining refs = %v", f.Refs)
+	}
+}
