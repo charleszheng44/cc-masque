@@ -2,7 +2,10 @@ GO ?= go
 BINARY := cc-crew
 PKGS := ./...
 
-.PHONY: all build test fmt vet lint cover clean
+IMAGE_REPO := ghcr.io/charleszheng44
+IMAGE_TAG  ?= latest
+
+.PHONY: all build test fmt vet lint cover clean docker-build docker-build-sandbox
 
 all: fmt vet test build
 
@@ -21,6 +24,12 @@ vet:
 cover:
 	$(GO) test -coverprofile=cover.out $(PKGS)
 	$(GO) tool cover -func=cover.out | tail -n 1
+
+docker-build:
+	docker build -t $(IMAGE_REPO)/cc-crew:$(IMAGE_TAG) .
+
+docker-build-sandbox:
+	docker build -f Dockerfile.ubuntu -t $(IMAGE_REPO)/cc-crew-sandbox:$(IMAGE_TAG) .
 
 clean:
 	rm -f $(BINARY) cover.out
