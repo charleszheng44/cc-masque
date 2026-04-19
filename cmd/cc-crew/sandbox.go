@@ -31,9 +31,20 @@ func runSandbox(_ []string) int {
 		"--name", name,
 		"-v", cwd + ":/workspace",
 	}
-	if token := os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"); token != "" {
-		runArgs = append(runArgs, "-e", "CLAUDE_CODE_OAUTH_TOKEN="+token)
+	runArgs = appendEnv(runArgs, "CLAUDE_CODE_OAUTH_TOKEN", os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"))
+	runArgs = appendEnv(runArgs, "ANTHROPIC_API_KEY", os.Getenv("ANTHROPIC_API_KEY"))
+	// Implementer GitHub token: prefer GH_TOKEN_IMPLEMENTER, fall back to GH_TOKEN.
+	ghToken := os.Getenv("GH_TOKEN_IMPLEMENTER")
+	if ghToken == "" {
+		ghToken = os.Getenv("GH_TOKEN")
 	}
+	runArgs = appendEnv(runArgs, "GH_TOKEN", ghToken)
+	gitName := os.Getenv("IMPLEMENTER_GIT_NAME")
+	runArgs = appendEnv(runArgs, "GIT_AUTHOR_NAME", gitName)
+	runArgs = appendEnv(runArgs, "GIT_COMMITTER_NAME", gitName)
+	gitEmail := os.Getenv("IMPLEMENTER_GIT_EMAIL")
+	runArgs = appendEnv(runArgs, "GIT_AUTHOR_EMAIL", gitEmail)
+	runArgs = appendEnv(runArgs, "GIT_COMMITTER_EMAIL", gitEmail)
 	runArgs = append(runArgs, sandboxImage)
 
 	start := exec.Command("docker", runArgs...)
@@ -66,6 +77,13 @@ func gitRepoName() (string, error) {
 	}
 	toplevel := strings.TrimSpace(string(out))
 	return sandboxSafeName(filepath.Base(toplevel)), nil
+}
+
+func appendEnv(args []string, key, val string) []string {
+	if val == "" {
+		return args
+	}
+	return append(args, "-e", key+"="+val)
 }
 
 func sandboxSafeName(s string) string {
