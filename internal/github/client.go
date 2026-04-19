@@ -9,6 +9,11 @@ import (
 // "Reference already exists" — the caller lost the atomic claim race.
 var ErrRefExists = errors.New("github: ref already exists")
 
+// ErrLabelExists is returned by CreateLabel when GitHub responds with 422
+// "already_exists". Signals the caller that the label is already present
+// and no action is needed.
+var ErrLabelExists = errors.New("github: label already exists")
+
 // Client is the surface area the rest of cc-crew depends on.
 // Implementations: *ghClient (production), *FakeClient (tests).
 type Client interface {
@@ -26,6 +31,7 @@ type Client interface {
 	// Labels
 	AddLabel(ctx context.Context, r Repo, issueOrPRNumber int, label string) error
 	RemoveLabel(ctx context.Context, r Repo, issueOrPRNumber int, label string) error
+	CreateLabel(ctx context.Context, r Repo, name, color, description string) error // returns ErrLabelExists on 422 already_exists
 
 	// Refs (via git/refs API)
 	CreateRef(ctx context.Context, r Repo, ref string, sha string) error // returns ErrRefExists on 422

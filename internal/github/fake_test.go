@@ -76,3 +76,39 @@ func TestFakeConcurrentReadsDoNotObserveTornLabels(t *testing.T) {
 	}
 	<-done
 }
+
+func TestFakeCreateLabelIdempotent(t *testing.T) {
+	c := NewFake()
+	r := Repo{Owner: "acme", Name: "widget"}
+	ctx := context.Background()
+
+	if err := c.CreateLabel(ctx, r, "claude-task", "1d76db", "desc"); err != nil {
+		t.Fatalf("first CreateLabel: %v", err)
+	}
+	err := c.CreateLabel(ctx, r, "claude-task", "1d76db", "desc")
+	if !errors.Is(err, ErrLabelExists) {
+		t.Fatalf("expected ErrLabelExists on second create, got %v", err)
+	}
+	if _, ok := c.Labels["claude-task"]; !ok {
+		t.Fatalf("label not recorded in FakeClient.Labels")
+	}
+}
+
+func TestFakeCreateLabelHookCanInjectError(t *testing.T) {
+	c := NewFake()
+	sentinel := errors.New("boom")
+	c.CreateLabelHook = func(name string) error {
+		if name == "claude-done" {
+			return sentinel
+		}
+		return nil
+	}
+	ctx := context.Background()
+	r := Repo{Owner: "acme", Name: "widget"}
+	if err := c.CreateLabel(ctx, r, "claude-task", "1d76db", "d"); err != nil {
+		t.Fatalf("claude-task should succeed: %v", err)
+	}
+	if err := c.CreateLabel(ctx, r, "claude-done", "0e8a16", "d"); err != sentinel {
+		t.Fatalf("want sentinel, got %v", err)
+	}
+}

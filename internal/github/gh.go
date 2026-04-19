@@ -284,5 +284,25 @@ func (c *ghClient) ListReviews(ctx context.Context, r Repo, pr int) ([]Review, e
 	return reviews, nil
 }
 
+// CreateLabel posts to /repos/<r>/labels with a JSON body. If GitHub
+// returns 422 with "already_exists", we map that to ErrLabelExists so
+// callers can distinguish an existing label from a real error.
+func (c *ghClient) CreateLabel(ctx context.Context, r Repo, name, color, description string) error {
+	body := fmt.Sprintf(`{"name":%q,"color":%q,"description":%q}`, name, color, description)
+	cmd := exec.CommandContext(ctx, c.ghBin, "api", "-X", "POST",
+		fmt.Sprintf("repos/%s/labels", r.String()),
+		"--input", "-")
+	cmd.Stdin = strings.NewReader(body)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if strings.Contains(stderr.String(), "already_exists") {
+			return ErrLabelExists
+		}
+		return fmt.Errorf("gh api create label %s: %w\nstderr: %s", name, err, stderr.String())
+	}
+	return nil
+}
+
 // (helper used by tests to override the binary)
 func newGhClientWithBin(bin string) *ghClient { return &ghClient{ghBin: bin} }

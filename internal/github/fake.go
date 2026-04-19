@@ -17,12 +17,14 @@ type FakeClient struct {
 	Issues    map[int]*Issue       // keyed by number
 	PRs       map[int]*PullRequest // keyed by number
 	Refs      map[string]string    // ref name → sha
+	Labels    map[string]struct{}  // label name → presence
 	Reviews   map[int][]Review     // PR number → reviews
 	DefaultBr string
 
 	// Hooks for injecting errors in specific calls. Leave nil to disable.
-	CreateRefHook func(ref string) error
-	DeleteRefHook func(ref string) error
+	CreateRefHook   func(ref string) error
+	DeleteRefHook   func(ref string) error
+	CreateLabelHook func(name string) error
 }
 
 func NewFake() *FakeClient {
@@ -31,6 +33,7 @@ func NewFake() *FakeClient {
 		Issues:    map[int]*Issue{},
 		PRs:       map[int]*PullRequest{},
 		Refs:      map[string]string{},
+		Labels:    map[string]struct{}{},
 		Reviews:   map[int][]Review{},
 		DefaultBr: "main",
 	}
@@ -175,6 +178,21 @@ func (f *FakeClient) RemoveLabel(ctx context.Context, r Repo, n int, label strin
 		return nil
 	}
 	return fmt.Errorf("fake: issue/PR %d not found", n)
+}
+
+func (f *FakeClient) CreateLabel(ctx context.Context, r Repo, name, color, description string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.CreateLabelHook != nil {
+		if err := f.CreateLabelHook(name); err != nil {
+			return err
+		}
+	}
+	if _, exists := f.Labels[name]; exists {
+		return ErrLabelExists
+	}
+	f.Labels[name] = struct{}{}
+	return nil
 }
 
 func (f *FakeClient) CreateRef(ctx context.Context, r Repo, ref, sha string) error {

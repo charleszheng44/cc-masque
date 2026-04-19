@@ -181,6 +181,8 @@ make build                 # produces ./cc-crew
 
 From inside a clone of the target repo:
 
+Before the first `up`, run `cc-crew init` once per repo to create the nine lifecycle labels on the remote (`claude-task`, `claude-processing`, `claude-done`, `claude-review`, `claude-reviewing`, `claude-reviewed`, `claude-address`, `claude-addressing`, `claude-addressed`). It's safe to re-run — already-present labels are reported and skipped.
+
 ```bash
 export GH_TOKEN_IMPLEMENTER=github_pat_...
 export GH_TOKEN_REVIEWER=github_pat_...
@@ -191,6 +193,7 @@ export IMPLEMENTER_GIT_EMAIL="impl@example.com"
 export REVIEWER_GIT_NAME="reviewer-bot"
 export REVIEWER_GIT_EMAIL="rev@example.com"
 
+./cc-crew init                     # create the 9 cc-crew labels on the remote (idempotent)
 ./cc-crew up                       # foreground; Ctrl-C to stop
 ./cc-crew up --max-implementers 3 --max-reviewers 2
 ./cc-crew status                   # in another terminal; stateless
