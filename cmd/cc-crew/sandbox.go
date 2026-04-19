@@ -9,7 +9,7 @@ import (
 	"time"
 )
 
-const sandboxImage = "ghcr.io/charleszheng44/cc-crew:ubuntu"
+const sandboxImage = "ghcr.io/charleszheng44/cc-crew-sandbox"
 
 func runSandbox(_ []string) int {
 	repoName, err := gitRepoName()
