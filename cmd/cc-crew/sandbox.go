@@ -26,10 +26,17 @@ func runSandbox(_ []string) int {
 		return 1
 	}
 
+	home, err := os.UserHomeDir()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "cc-crew sandbox: home dir: %v\n", err)
+		return 1
+	}
+
 	runArgs := []string{
 		"run", "-d", "--rm",
 		"--name", name,
 		"-v", cwd + ":/workspace",
+		"-v", home + "/.claude:/home/claude/.claude",
 	}
 	runArgs = appendEnv(runArgs, "CLAUDE_CODE_OAUTH_TOKEN", os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"))
 	runArgs = appendEnv(runArgs, "ANTHROPIC_API_KEY", os.Getenv("ANTHROPIC_API_KEY"))
