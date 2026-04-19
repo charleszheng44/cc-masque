@@ -11,7 +11,7 @@ cc-crew turns GitHub labels into a local work queue. A single Go binary (`cc-cre
 - **Implementer** — picks up issues labeled `claude-task`, implements the change, opens a PR.
 - **Reviewer** — picks up PRs labeled `claude-review`, posts a review.
 
-The project extends the existing cc-masque repo (to be renamed to cc-crew), which already ships a persona-based Docker image.
+The project extends the existing cc-crew repo (to be renamed to cc-crew), which already ships a persona-based Docker image.
 
 ## 2. Goals
 
@@ -160,7 +160,7 @@ All flags have env fallbacks.
 | `REVIEWER_GIT_NAME` | yes (if reviewer enabled) | Same, for reviewer |
 | `REVIEWER_GIT_EMAIL` | yes (if reviewer enabled) | Same, for reviewer |
 
-\* At least one of `GH_TOKEN_<ROLE>` or `GH_TOKEN` must be set. Per-persona tokens let the two personas act as distinct GitHub identities (the original motivation for cc-masque). A single shared `GH_TOKEN` is supported for simpler setups.
+\* At least one of `GH_TOKEN_<ROLE>` or `GH_TOKEN` must be set. Per-persona tokens let the two personas act as distinct GitHub identities (the original motivation for cc-crew). A single shared `GH_TOKEN` is supported for simpler setups.
 
 ### 7.3 Reset — bulk cleanup
 
@@ -353,7 +353,7 @@ Claude's CLAUDE.md (per-persona) instructs it to do the role-specific work itsel
 ## 10. File layout
 
 ```
-cc-crew/                                # renamed from cc-masque
+cc-crew/                                # renamed from cc-crew
 ├── Dockerfile                          # extended: COPY scripts/cc-crew-run /usr/local/bin/
 ├── README.md                           # extended with orchestrator usage
 ├── personas/
@@ -416,6 +416,6 @@ Incremental so each step is runnable and testable:
 10. `personas/implementer/` — CLAUDE.md + settings.json.
 11. End-to-end: open a labeled issue in a scratch repo, observe claim → branch → PR → label transition. Then label the PR `claude-review`, observe review post. Then run `cc-crew reset --yes` against the scratch repo and confirm all cc-crew refs are gone and labels are restored.
 
-## 13. Migration from cc-masque
+## 13. Migration from cc-crew
 
-Out-of-band, not part of this spec: rename the GitHub repo `charleszheng44/cc-masque` → `charleszheng44/cc-crew`, update the Docker image name in `docker-publish.yml`, update README references. No code behavior changes.
+Out-of-band, not part of this spec: rename the GitHub repo `charleszheng44/cc-crew` → `charleszheng44/cc-crew`, update the Docker image name in `docker-publish.yml`, update README references. No code behavior changes.

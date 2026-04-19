@@ -1,4 +1,4 @@
-# cc-masque
+# cc-crew
 
 Run multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions locally, each acting as a different role with its own remote service access (GitHub account, Claude auth, etc.). Built on `node:lts-alpine` with `git`, `bash`, `gh`, and the Claude Code CLI pre-installed. Spin up one container per persona — each gets its own `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, git identity, and scoped permissions — then fire `claude -p "..."` commands at any of them from the host.
 

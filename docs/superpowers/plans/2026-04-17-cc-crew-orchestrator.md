@@ -6,7 +6,7 @@
 
 **Architecture:** Single foreground Go process with three subcommands (`up`, `status`, `reset`). A tick loop (60s default) runs reclaim sweeper + polling + dispatch under per-persona semaphores. Each dispatched task runs in a one-shot `docker run --rm` container that bind-mounts a host-side git worktree. Atomic claims use `POST /git/refs` (201 vs 422). Failure drops the lock and leaves the queue label intact for automatic retry.
 
-**Tech Stack:** Go (stdlib only: `flag`, `net/http`, `encoding/json`, `log/slog`, `os/exec`, `context`, `sync`, `sync/atomic`), shelling out to `gh`, `git`, and `docker`. Testing with the standard `testing` package and fakes behind small interfaces. Container image built on the existing `cc-masque` Dockerfile (to be renamed to `cc-crew`).
+**Tech Stack:** Go (stdlib only: `flag`, `net/http`, `encoding/json`, `log/slog`, `os/exec`, `context`, `sync`, `sync/atomic`), shelling out to `gh`, `git`, and `docker`. Testing with the standard `testing` package and fakes behind small interfaces. Container image built on the existing `cc-crew` Dockerfile (to be renamed to `cc-crew`).
 
 **Reference spec:** `docs/superpowers/specs/2026-04-16-cc-crew-orchestrator-design.md`
 
