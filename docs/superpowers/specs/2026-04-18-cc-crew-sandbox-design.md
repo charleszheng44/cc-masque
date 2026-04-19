@@ -49,7 +49,7 @@ The existing `cc-crew up` workflow runs Claude non-interactively inside the ligh
 cc-crew-sandbox-<gitrepo>-<unix-timestamp>
 ```
 
-Example: `cc-crew-sandbox-cc-masque-1745001234`
+Example: `cc-crew-sandbox-cc-crew-1745001234`
 
 Each invocation creates a fresh container. No re-attachment across sessions; packages installed in one session do not persist to the next.
 
