@@ -5,7 +5,7 @@ PKGS := ./...
 IMAGE_REPO := ghcr.io/charleszheng44
 IMAGE_TAG  ?= latest
 
-.PHONY: all build test fmt vet lint cover clean docker-build docker-build-sandbox
+.PHONY: all build test fmt vet lint cover clean docker-build docker-build-sandbox docker-publish docker-publish-sandbox
 
 all: fmt vet test build
 
@@ -30,6 +30,12 @@ docker-build:
 
 docker-build-sandbox:
 	docker build -f Dockerfile.ubuntu -t $(IMAGE_REPO)/cc-crew-sandbox:$(IMAGE_TAG) .
+
+docker-publish: docker-build
+	docker push $(IMAGE_REPO)/cc-crew:$(IMAGE_TAG)
+
+docker-publish-sandbox: docker-build-sandbox
+	docker push $(IMAGE_REPO)/cc-crew-sandbox:$(IMAGE_TAG)
 
 clean:
 	rm -f $(BINARY) cover.out
