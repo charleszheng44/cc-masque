@@ -21,6 +21,8 @@ func main() {
 		os.Exit(runStatus(os.Args[2:]))
 	case "reset":
 		os.Exit(runReset(os.Args[2:]))
+	case "sandbox":
+		os.Exit(runSandbox(os.Args[2:]))
 	case "help", "-h", "--help":
 		usage()
 	default:
@@ -37,6 +39,7 @@ Usage:
   cc-crew up       Start the orchestrator (foreground)
   cc-crew status   Print current task/queue snapshot
   cc-crew reset    Bulk-clean all cc-crew state in the repo
+  cc-crew sandbox  Launch an interactive Claude Code session in a sandboxed Ubuntu container
   cc-crew version  Print version
   cc-crew help     Show this help`)
 }
