@@ -45,6 +45,7 @@ func TestValidateNoClaudeCreds(t *testing.T) {
 func TestValidateAllowsImplementerOnly(t *testing.T) {
 	c := baseValid()
 	c.MaxReviewers = 0
+	c.MaxMergers = 0
 	c.ReviewerGHToken = ""
 	c.ReviewerGitName = ""
 	c.ReviewerGitEmail = ""
@@ -66,5 +67,50 @@ func TestDefaultsIncludeContinuousAndAddressLabels(t *testing.T) {
 		d.AddressedLabel != "claude-addressed" {
 		t.Fatalf("address labels: %q %q %q",
 			d.AddressLabel, d.AddressingLabel, d.AddressedLabel)
+	}
+}
+
+func TestDefaultsIncludeMergerLabelsAndCap(t *testing.T) {
+	d := Defaults()
+	if d.MaxMergers != 2 {
+		t.Fatalf("MaxMergers = %d, want 2", d.MaxMergers)
+	}
+	if d.MergeLabel != "claude-merge" ||
+		d.MergingLabel != "claude-merging" ||
+		d.ResolveConflictLabel != "claude-resolve-conflict" ||
+		d.ResolvingLabel != "claude-resolving" ||
+		d.ConflictBlockedLabel != "claude-conflict-blocked" {
+		t.Fatalf("merger labels: %q %q %q %q %q",
+			d.MergeLabel, d.MergingLabel, d.ResolveConflictLabel,
+			d.ResolvingLabel, d.ConflictBlockedLabel)
+	}
+}
+
+func TestValidateRequiresReviewerTokenWhenMergerEnabled(t *testing.T) {
+	c := baseValid()
+	// Disable reviewer so the reviewer-branch error doesn't fire first.
+	c.MaxReviewers = 0
+	c.ReviewerGitName = ""
+	c.ReviewerGitEmail = ""
+	c.ReviewerGHToken = ""
+	// Merger enabled by default in baseValid via Defaults().
+	if c.MaxMergers <= 0 {
+		t.Fatalf("precondition: MaxMergers should be > 0 by default, got %d", c.MaxMergers)
+	}
+	err := c.Validate()
+	if err == nil || !strings.Contains(err.Error(), "GH_TOKEN_REVIEWER") {
+		t.Fatalf("expected GH_TOKEN_REVIEWER error, got %v", err)
+	}
+}
+
+func TestValidateAllowsMergerDisabled(t *testing.T) {
+	c := baseValid()
+	c.MaxMergers = 0
+	c.MaxReviewers = 0
+	c.ReviewerGitName = ""
+	c.ReviewerGitEmail = ""
+	c.ReviewerGHToken = ""
+	if err := c.Validate(); err != nil {
+		t.Fatalf("disabling merger and reviewer should validate: %v", err)
 	}
 }

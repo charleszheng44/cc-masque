@@ -19,6 +19,8 @@ const (
 	KindImplementer Kind = iota
 	KindReviewer
 	KindAddresser
+	KindMerger
+	KindResolver
 )
 
 // Paths encodes the ref-name layout for each kind.
@@ -44,6 +46,16 @@ func PathsFor(k Kind, number int) Paths {
 		return Paths{
 			LockRef:   fmt.Sprintf("refs/cc-crew/address-lock/pr-%d", number),
 			RefPrefix: fmt.Sprintf("cc-crew/address-claim/pr-%d/", number),
+		}
+	case KindMerger:
+		return Paths{
+			LockRef:   fmt.Sprintf("refs/cc-crew/merge-lock/pr-%d", number),
+			RefPrefix: fmt.Sprintf("cc-crew/merge-claim/pr-%d/", number),
+		}
+	case KindResolver:
+		return Paths{
+			LockRef:   fmt.Sprintf("refs/cc-crew/resolve-lock/pr-%d", number),
+			RefPrefix: fmt.Sprintf("cc-crew/resolve-claim/pr-%d/", number),
 		}
 	}
 	panic("unreachable")
