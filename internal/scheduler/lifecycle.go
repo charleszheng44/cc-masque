@@ -51,6 +51,16 @@ type Lifecycle struct {
 	ReviewLabel          string
 	MergeLabel           string
 	ConflictBlockedLabel string
+	// QuarantineLabel is applied once Quarantine crosses its threshold for
+	// this (kind, number). Blank disables label application even when
+	// Quarantine is set, which is useful for tests that only care about the
+	// counter.
+	QuarantineLabel string
+
+	// Quarantine is the shared in-memory failure tracker. The Lifecycle
+	// calls RecordFailure/RecordSuccess at each dispatch outcome; the
+	// Scheduler reads the state to decide whether to skip a candidate.
+	Quarantine *Quarantine
 
 	// Merger/resolver-aware reviewer field. Only read when Kind == KindReviewer.
 	AddressLabel string
@@ -102,13 +112,13 @@ func (l *Lifecycle) dispatchImplementer(ctx context.Context, log *slog.Logger, n
 	wtPath, err := l.WT.Add(ctx, branch)
 	if err != nil {
 		log.Error("worktree add failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("worktree add failed: %v", err))
 		return
 	}
 	homePath, err := prepareContainerHome(wtPath)
 	if err != nil {
 		log.Error("prepare container home failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("prepare container home failed: %v", err))
 		l.removeWorktree(ctx, number)
 		return
 	}
@@ -120,7 +130,7 @@ func (l *Lifecycle) dispatchImplementer(ctx context.Context, log *slog.Logger, n
 	code, err := l.Docker.Run(runCtx, spec)
 	if err != nil {
 		log.Warn("task timed out or cancelled", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("task timed out or cancelled: %v", err))
 		l.removeWorktree(ctx, number)
 		return
 	}
@@ -128,7 +138,7 @@ func (l *Lifecycle) dispatchImplementer(ctx context.Context, log *slog.Logger, n
 		l.successCleanup(ctx, number)
 	} else {
 		log.Warn("task exited non-zero", "code", code)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("container exited with code %d", code))
 	}
 	l.removeWorktree(ctx, number)
 }
@@ -137,25 +147,25 @@ func (l *Lifecycle) dispatchReviewer(ctx context.Context, log *slog.Logger, numb
 	pr, err := l.GH.GetPR(ctx, l.Repo, number)
 	if err != nil {
 		log.Error("get PR failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("get PR failed: %v", err))
 		return
 	}
 	headSha := pr.HeadRefOid
 	if headSha == "" {
 		log.Error("PR head SHA is empty", "pr", number)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, "PR head SHA is empty")
 		return
 	}
 	wtPath, err := l.WT.AddDetached(ctx, fmt.Sprintf("review-%d", number), headSha)
 	if err != nil {
 		log.Error("worktree add detached failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("worktree add detached failed: %v", err))
 		return
 	}
 	homePath, err := prepareContainerHome(wtPath)
 	if err != nil {
 		log.Error("prepare container home failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("prepare container home failed: %v", err))
 		l.removeWorktree(ctx, number)
 		return
 	}
@@ -167,7 +177,7 @@ func (l *Lifecycle) dispatchReviewer(ctx context.Context, log *slog.Logger, numb
 	code, err := l.Docker.Run(runCtx, spec)
 	if err != nil {
 		log.Warn("task timed out or cancelled", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("task timed out or cancelled: %v", err))
 		l.removeWorktree(ctx, number)
 		return
 	}
@@ -175,7 +185,7 @@ func (l *Lifecycle) dispatchReviewer(ctx context.Context, log *slog.Logger, numb
 		l.successCleanupReviewer(ctx, number, headSha)
 	} else {
 		log.Warn("task exited non-zero", "code", code)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("container exited with code %d", code))
 	}
 	l.removeWorktree(ctx, number)
 }
@@ -184,25 +194,25 @@ func (l *Lifecycle) dispatchAddresser(ctx context.Context, log *slog.Logger, num
 	pr, err := l.GH.GetPR(ctx, l.Repo, number)
 	if err != nil {
 		log.Error("get PR failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("get PR failed: %v", err))
 		return
 	}
 	if pr.HeadRefOid == "" {
 		log.Error("PR head SHA is empty", "pr", number)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, "PR head SHA is empty")
 		return
 	}
 	issueNum, ok := issueNumFromBranch(pr.HeadRefName)
 	if !ok {
 		log.Error("head branch is not claude/issue-*", "branch", pr.HeadRefName)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("head branch is not claude/issue-*: %s", pr.HeadRefName))
 		return
 	}
 
 	reviewIDs, err := l.snapshotUnaddressedReviews(ctx, number)
 	if err != nil {
 		log.Error("snapshot reviews failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("snapshot reviews failed: %v", err))
 		return
 	}
 	if len(reviewIDs) == 0 {
@@ -235,13 +245,13 @@ func (l *Lifecycle) dispatchAddresser(ctx context.Context, log *slog.Logger, num
 	wtPath, err := l.WT.AddDetached(ctx, fmt.Sprintf("address-%d", number), pr.HeadRefOid)
 	if err != nil {
 		log.Error("worktree add detached failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("worktree add detached failed: %v", err))
 		return
 	}
 	homePath, err := prepareContainerHome(wtPath)
 	if err != nil {
 		log.Error("prepare container home failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("prepare container home failed: %v", err))
 		l.removeAddresserWorktree(ctx, number)
 		return
 	}
@@ -253,7 +263,7 @@ func (l *Lifecycle) dispatchAddresser(ctx context.Context, log *slog.Logger, num
 	code, err := l.Docker.Run(runCtx, spec)
 	if err != nil {
 		log.Warn("task timed out or cancelled", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("task timed out or cancelled: %v", err))
 		l.removeAddresserWorktree(ctx, number)
 		return
 	}
@@ -261,7 +271,7 @@ func (l *Lifecycle) dispatchAddresser(ctx context.Context, log *slog.Logger, num
 		l.successCleanupAddresser(ctx, number, reviewIDs)
 	} else {
 		log.Warn("task exited non-zero", "code", code)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("container exited with code %d", code))
 	}
 	l.removeAddresserWorktree(ctx, number)
 }
@@ -427,6 +437,7 @@ func (l *Lifecycle) successCleanup(ctx context.Context, number int) {
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
 	_ = l.GH.AddLabel(ctx, l.Repo, number, l.DoneLabel)
+	l.recordDispatchSuccess(number)
 
 	// Implementer: keep the lock branch (PR references it).
 	_ = l.releaseWithRetry(ctx, l.Kind, number, false)
@@ -461,6 +472,7 @@ func (l *Lifecycle) successCleanupReviewer(ctx context.Context, number int, head
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
 	_ = l.GH.AddLabel(ctx, l.Repo, number, l.DoneLabel)
+	l.recordDispatchSuccess(number)
 
 	switch verdict {
 	case "APPROVED":
@@ -526,13 +538,60 @@ func (l *Lifecycle) successCleanupAddresser(ctx context.Context, prNumber int, r
 	_ = l.GH.RemoveLabel(ctx, l.Repo, prNumber, l.LockLabel)
 	_ = l.GH.RemoveLabel(ctx, l.Repo, prNumber, l.QueueLabel)
 	_ = l.GH.AddLabel(ctx, l.Repo, prNumber, l.DoneLabel)
+	l.recordDispatchSuccess(prNumber)
 	// Release address-lock + address-claim ts tags last.
 	_ = l.releaseWithRetry(ctx, claim.KindAddresser, prNumber, true)
 }
 
-func (l *Lifecycle) failCleanup(ctx context.Context, number int) {
+// failCleanup drops the lock label and releases the claim so the scheduler
+// can re-pick this item on the next tick. reason is recorded in the
+// Quarantine tracker (when enabled) so the quarantine comment can name the
+// last failure — pass "" when the caller has no concrete error to surface.
+func (l *Lifecycle) failCleanup(ctx context.Context, number int, reason string) {
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
 	_ = l.releaseWithRetry(ctx, l.Kind, number, true)
+	l.recordDispatchFailure(ctx, number, reason)
+}
+
+// recordDispatchFailure bumps the Quarantine counter and, if the threshold
+// was just crossed, applies the quarantine label and posts an explanatory
+// comment. Safe to call with Quarantine == nil or QuarantineLabel == "".
+func (l *Lifecycle) recordDispatchFailure(ctx context.Context, number int, reason string) {
+	if l.Quarantine == nil {
+		return
+	}
+	count, shouldLabel := l.Quarantine.RecordFailure(l.Kind, number, reason)
+	if !shouldLabel || l.QuarantineLabel == "" {
+		return
+	}
+	if err := l.GH.AddLabel(ctx, l.Repo, number, l.QuarantineLabel); err != nil {
+		l.Log.Warn("quarantine: add label failed",
+			"kind", kindName(l.Kind), "number", number, "err", err)
+		return
+	}
+	lastErr := l.Quarantine.LastErr(l.Kind, number)
+	if lastErr == "" {
+		lastErr = "(no error detail recorded)"
+	}
+	body := fmt.Sprintf(
+		"🚫 cc-crew %s quarantined after %d consecutive dispatch failures.\n\n"+
+			"Last error: %s\n\n"+
+			"Remove `%s` to re-enable automation.",
+		kindName(l.Kind), count, lastErr, l.QuarantineLabel)
+	if err := l.GH.CreateComment(ctx, l.Repo, number, body); err != nil {
+		l.Log.Warn("quarantine: create comment failed",
+			"kind", kindName(l.Kind), "number", number, "err", err)
+	}
+}
+
+// recordDispatchSuccess resets the Quarantine counter. Called from every
+// successful success-cleanup path so flaky-but-recoverable failures don't
+// accumulate toward a false quarantine.
+func (l *Lifecycle) recordDispatchSuccess(number int) {
+	if l.Quarantine == nil {
+		return
+	}
+	l.Quarantine.RecordSuccess(l.Kind, number)
 }
 
 func (l *Lifecycle) removeWorktree(ctx context.Context, number int) {

@@ -141,8 +141,8 @@ func TestBuildLabelSpecsHonorsEnvOverrides(t *testing.T) {
 	if !found {
 		t.Fatalf("expected a spec named foo, got %+v", got)
 	}
-	if len(got) != 14 {
-		t.Fatalf("expected 14 specs, got %d", len(got))
+	if len(got) != 15 {
+		t.Fatalf("expected 15 specs, got %d", len(got))
 	}
 }
 

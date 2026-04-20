@@ -38,6 +38,12 @@ type Config struct {
 	ResolvingLabel       string
 	ConflictBlockedLabel string
 
+	// Quarantine (issue #43): after QuarantineThreshold consecutive
+	// dispatch failures on the same (kind, number), the scheduler applies
+	// QuarantineLabel and stops claiming until a human removes it.
+	QuarantineLabel     string
+	QuarantineThreshold int
+
 	AutoReview bool
 
 	ImplMaxTurns   int
@@ -87,6 +93,9 @@ func Defaults() Config {
 		ResolveConflictLabel: "claude-resolve-conflict",
 		ResolvingLabel:       "claude-resolving",
 		ConflictBlockedLabel: "claude-conflict-blocked",
+
+		QuarantineLabel:     "claude-failed",
+		QuarantineThreshold: 3,
 
 		// 0 = unlimited; only enforced when the user explicitly sets a cap.
 		ImplMaxTurns:   0,

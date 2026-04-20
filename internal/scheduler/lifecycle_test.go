@@ -57,7 +57,7 @@ func TestFailCleanupDropsLockAndKeepsQueueLabel(t *testing.T) {
 		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
 		QueueLabel: "claude-task", LockLabel: "claude-processing", DoneLabel: "claude-done",
 	}
-	l.failCleanup(context.Background(), 42)
+	l.failCleanup(context.Background(), 42, "test failure")
 
 	i := f.Issues[42]
 	if !contains(i.Labels, "claude-task") {
@@ -171,7 +171,7 @@ func TestAddresserFailLeavesQueueLabel(t *testing.T) {
 		LockLabel:  "claude-addressing",
 		DoneLabel:  "claude-addressed",
 	}
-	l.failCleanup(context.Background(), 56)
+	l.failCleanup(context.Background(), 56, "test failure")
 
 	if _, ok := f.Refs["refs/cc-crew/address-lock/pr-56"]; ok {
 		t.Fatal("address-lock not released on fail")

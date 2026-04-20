@@ -26,12 +26,12 @@ func (l *Lifecycle) dispatchResolver(ctx context.Context, log *slog.Logger, numb
 	pr, err := l.GH.GetPR(ctx, l.Repo, number)
 	if err != nil {
 		log.Error("get PR failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("get PR failed: %v", err))
 		return
 	}
 	if pr.HeadRefOid == "" {
 		log.Error("PR head SHA empty", "pr", number)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, "PR head SHA is empty")
 		return
 	}
 
@@ -51,14 +51,14 @@ func (l *Lifecycle) dispatchResolver(ctx context.Context, log *slog.Logger, numb
 	wtPath, err := l.WT.AddDetached(ctx, fmt.Sprintf("resolve-%d", number), pr.HeadRefOid)
 	if err != nil {
 		log.Error("worktree add detached failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("worktree add detached failed: %v", err))
 		return
 	}
 	defer func() { _ = l.WT.Remove(ctx, fmt.Sprintf("resolve-%d", number)) }()
 	homePath, err := prepareContainerHome(wtPath)
 	if err != nil {
 		log.Error("prepare container home failed", "err", err)
-		l.failCleanup(ctx, number)
+		l.failCleanup(ctx, number, fmt.Sprintf("prepare container home failed: %v", err))
 		return
 	}
 
@@ -127,6 +127,7 @@ func (l *Lifecycle) buildResolverRunSpec(prNumber int, baseBranch, headBranch, w
 
 func (l *Lifecycle) resolverSuccessCleanup(ctx context.Context, log *slog.Logger, number int) {
 	log.Info("resolver succeeded", "pr", number)
+	l.recordDispatchSuccess(number)
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
 	// Force-push invalidates any prior approval under branch protection's

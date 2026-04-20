@@ -65,6 +65,8 @@ func buildLabelSpecs(getenv func(string) string) []labelSpec {
 			Color: "e65100", Description: "Resolver is working on this PR"},
 		{Name: firstNonEmpty(getenv("CC_CONFLICT_BLOCKED_LABEL"), d.ConflictBlockedLabel),
 			Color: "b71c1c", Description: "Conflict resolution failed; human attention needed"},
+		{Name: firstNonEmpty(getenv("CC_QUARANTINE_LABEL"), d.QuarantineLabel),
+			Color: "7f0000", Description: "Dispatch failed repeatedly; human attention needed"},
 	}
 }
 
