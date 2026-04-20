@@ -140,14 +140,16 @@ type ghIssue struct {
 	Labels []ghLabel `json:"labels"`
 }
 type ghPR struct {
-	Number      int       `json:"number"`
-	Title       string    `json:"title"`
-	Body        string    `json:"body"`
-	State       string    `json:"state"`
-	Labels      []ghLabel `json:"labels"`
-	HeadRefOid  string    `json:"headRefOid"`
-	HeadRefName string    `json:"headRefName"`
-	BaseRefName string    `json:"baseRefName"`
+	Number           int       `json:"number"`
+	Title            string    `json:"title"`
+	Body             string    `json:"body"`
+	State            string    `json:"state"`
+	Labels           []ghLabel `json:"labels"`
+	HeadRefOid       string    `json:"headRefOid"`
+	HeadRefName      string    `json:"headRefName"`
+	BaseRefName      string    `json:"baseRefName"`
+	Mergeable        string    `json:"mergeable"`
+	MergeStateStatus string    `json:"mergeStateStatus"`
 }
 
 func flattenLabels(l []ghLabel) []string {
@@ -194,7 +196,7 @@ OUTER:
 
 func (c *ghClient) ListPRs(ctx context.Context, r Repo, with, without []string) ([]PullRequest, error) {
 	args := []string{"pr", "list", "-R", r.String(), "--state", "open",
-		"--json", "number,title,body,state,labels,headRefOid,headRefName,baseRefName",
+		"--json", "number,title,body,state,labels,headRefOid,headRefName,baseRefName,mergeable,mergeStateStatus",
 		"--limit", "200"}
 	for _, l := range with {
 		args = append(args, "--label", l)
@@ -223,6 +225,7 @@ OUTER:
 			State:  strings.ToLower(g.State),
 			Labels: labels, HeadRefOid: g.HeadRefOid,
 			HeadRefName: g.HeadRefName, BaseRefName: g.BaseRefName,
+			Mergeable: g.Mergeable, MergeStateStatus: g.MergeStateStatus,
 		})
 	}
 	return prs, nil
@@ -230,7 +233,7 @@ OUTER:
 
 func (c *ghClient) GetPR(ctx context.Context, r Repo, n int) (PullRequest, error) {
 	out, err := c.runGh(ctx, "pr", "view", fmt.Sprint(n), "-R", r.String(),
-		"--json", "number,title,body,state,labels,headRefOid,headRefName,baseRefName")
+		"--json", "number,title,body,state,labels,headRefOid,headRefName,baseRefName,mergeable,mergeStateStatus")
 	if err != nil {
 		return PullRequest{}, err
 	}
@@ -243,6 +246,7 @@ func (c *ghClient) GetPR(ctx context.Context, r Repo, n int) (PullRequest, error
 		State:  strings.ToLower(g.State),
 		Labels: flattenLabels(g.Labels), HeadRefOid: g.HeadRefOid,
 		HeadRefName: g.HeadRefName, BaseRefName: g.BaseRefName,
+		Mergeable: g.Mergeable, MergeStateStatus: g.MergeStateStatus,
 	}, nil
 }
 

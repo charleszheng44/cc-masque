@@ -94,6 +94,34 @@ func TestFakeCreateLabelIdempotent(t *testing.T) {
 	}
 }
 
+func TestFakeGetPRRoundTripsMergeableFields(t *testing.T) {
+	c := NewFake()
+	r := Repo{Owner: "acme", Name: "widget"}
+	c.PRs[9] = &PullRequest{
+		Number: 9, State: "open",
+		Mergeable: "MERGEABLE", MergeStateStatus: "BEHIND",
+	}
+
+	got, err := c.GetPR(context.Background(), r, 9)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Mergeable != "MERGEABLE" || got.MergeStateStatus != "BEHIND" {
+		t.Fatalf("GetPR: want MERGEABLE/BEHIND, got %q/%q", got.Mergeable, got.MergeStateStatus)
+	}
+
+	list, err := c.ListPRs(context.Background(), r, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("want 1 PR, got %d", len(list))
+	}
+	if list[0].Mergeable != "MERGEABLE" || list[0].MergeStateStatus != "BEHIND" {
+		t.Fatalf("ListPRs: want MERGEABLE/BEHIND, got %q/%q", list[0].Mergeable, list[0].MergeStateStatus)
+	}
+}
+
 func TestFakeCreateLabelHookCanInjectError(t *testing.T) {
 	c := NewFake()
 	sentinel := errors.New("boom")

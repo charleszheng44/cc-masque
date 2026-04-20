@@ -195,6 +195,42 @@ exit 1
 	}
 }
 
+func TestGetPRParsesMergeableFields(t *testing.T) {
+	body := `{"number":42,"title":"t","body":"b","state":"OPEN","labels":[],"headRefOid":"abc","headRefName":"claude/issue-42","baseRefName":"main","mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}`
+	bin := fakeBin(t, `cat <<'EOF'
+`+body+`
+EOF`)
+	c := newGhClientWithBin(bin)
+	got, err := c.GetPR(context.Background(), Repo{Owner: "a", Name: "b"}, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Mergeable != "MERGEABLE" {
+		t.Fatalf("Mergeable: want MERGEABLE, got %q", got.Mergeable)
+	}
+	if got.MergeStateStatus != "CLEAN" {
+		t.Fatalf("MergeStateStatus: want CLEAN, got %q", got.MergeStateStatus)
+	}
+}
+
+func TestListPRsParsesMergeableFields(t *testing.T) {
+	body := `[{"number":7,"title":"t","body":"b","state":"open","labels":[],"headRefOid":"abc","headRefName":"h","baseRefName":"main","mergeable":"CONFLICTING","mergeStateStatus":"DIRTY"}]`
+	bin := fakeBin(t, `cat <<'EOF'
+`+body+`
+EOF`)
+	c := newGhClientWithBin(bin)
+	got, err := c.ListPRs(context.Background(), Repo{Owner: "a", Name: "b"}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 PR, got %d", len(got))
+	}
+	if got[0].Mergeable != "CONFLICTING" || got[0].MergeStateStatus != "DIRTY" {
+		t.Fatalf("want CONFLICTING/DIRTY, got %q/%q", got[0].Mergeable, got[0].MergeStateStatus)
+	}
+}
+
 func TestCountOpenBlockers(t *testing.T) {
 	body := `[{"state":"open"},{"state":"closed"},{"state":"open"}]`
 	bin := fakeBin(t, `cat <<'EOF'

@@ -11,14 +11,16 @@ type Issue struct {
 }
 
 type PullRequest struct {
-	Number      int      `json:"number"`
-	Title       string   `json:"title"`
-	Body        string   `json:"body"`
-	State       string   `json:"state"`
-	Labels      []string `json:"labels"`
-	HeadRefOid  string   `json:"headRefOid"`
-	HeadRefName string   `json:"headRefName"`
-	BaseRefName string   `json:"baseRefName"`
+	Number           int      `json:"number"`
+	Title            string   `json:"title"`
+	Body             string   `json:"body"`
+	State            string   `json:"state"`
+	Labels           []string `json:"labels"`
+	HeadRefOid       string   `json:"headRefOid"`
+	HeadRefName      string   `json:"headRefName"`
+	BaseRefName      string   `json:"baseRefName"`
+	Mergeable        string   `json:"mergeable"`
+	MergeStateStatus string   `json:"mergeStateStatus"`
 }
 
 type Ref struct {
