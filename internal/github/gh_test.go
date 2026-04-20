@@ -160,8 +160,13 @@ func TestCreateLabelSuccess(t *testing.T) {
 	}
 }
 
+// Real gh CLI behavior on a duplicate label: the JSON response body (which
+// carries the "already_exists" code) goes to stdout, while stderr only has a
+// short "gh: Validation Failed (HTTP 422)" line. CreateLabel must detect the
+// already-exists case from either stream.
 func TestCreateLabelDetects422AsErrLabelExists(t *testing.T) {
-	bin := fakeBin(t, `echo "HTTP 422: Validation Failed (already_exists)" 1>&2
+	bin := fakeBin(t, `printf '%s' '{"message":"Validation Failed","errors":[{"resource":"Label","code":"already_exists","field":"name"}],"status":"422"}'
+echo "gh: Validation Failed (HTTP 422)" 1>&2
 exit 1
 `)
 	c := newGhClientWithBin(bin)

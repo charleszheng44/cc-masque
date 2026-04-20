@@ -293,13 +293,19 @@ func (c *ghClient) CreateLabel(ctx context.Context, r Repo, name, color, descrip
 		fmt.Sprintf("repos/%s/labels", r.String()),
 		"--input", "-")
 	cmd.Stdin = strings.NewReader(body)
-	var stderr bytes.Buffer
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
-		if strings.Contains(stderr.String(), "already_exists") {
+		// gh prints the API error body (with the "already_exists" code) to
+		// stdout and a short "gh: Validation Failed (HTTP 422)" to stderr,
+		// so we have to inspect both streams.
+		if strings.Contains(stdout.String(), "already_exists") ||
+			strings.Contains(stderr.String(), "already_exists") {
 			return ErrLabelExists
 		}
-		return fmt.Errorf("gh api create label %s: %w\nstderr: %s", name, err, stderr.String())
+		return fmt.Errorf("gh api create label %s: %w\nstderr: %s\nstdout: %s",
+			name, err, stderr.String(), stdout.String())
 	}
 	return nil
 }
