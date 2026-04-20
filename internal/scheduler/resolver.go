@@ -13,26 +13,31 @@ import (
 // dispatchResolver dispatches a container on the implementer image with
 // CC_ROLE=resolver. On exit 0: clear resolver labels, re-queue the reviewer
 // (remove DoneLabel, add ReviewLabel) because the resolver force-pushes and
-// any prior approval may be dismissed by branch protection. On failure or
-// timeout: apply ConflictBlockedLabel, remove MergeLabel, and post an
-// escalation comment so a human can take over.
+// any prior approval may be dismissed by branch protection. On container
+// non-zero exit or timeout (resolverFailCleanup): apply ConflictBlockedLabel,
+// remove MergeLabel, and post an escalation comment so a human can take over.
+// Pre-container errors (GitHub API blips, worktree setup failures) use the
+// generic failCleanup path — release the claim, drop the lock label, and
+// leave claude-resolve-conflict in place so the next tick retries. The
+// terminal labels are reserved for failures where the container actually
+// ran and could not rebase, per spec §9.
 func (l *Lifecycle) dispatchResolver(ctx context.Context, log *slog.Logger, number int) {
 	pr, err := l.GH.GetPR(ctx, l.Repo, number)
 	if err != nil {
 		log.Error("get PR failed", "err", err)
-		l.resolverFailCleanup(ctx, log, number)
+		l.failCleanup(ctx, number)
 		return
 	}
 	if pr.HeadRefOid == "" {
 		log.Error("PR head SHA empty", "pr", number)
-		l.resolverFailCleanup(ctx, log, number)
+		l.failCleanup(ctx, number)
 		return
 	}
 
 	// Test seam short-circuits worktree + docker so unit tests can assert
 	// label transitions without a real git repo or docker daemon.
-	if l.dockerRunFn != nil {
-		code, runErr := l.dockerRunFn()
+	if l.resolverDockerRunFn != nil {
+		code, runErr := l.resolverDockerRunFn()
 		if runErr != nil || code != 0 {
 			log.Warn("resolver exited non-zero", "code", code, "err", runErr)
 			l.resolverFailCleanup(ctx, log, number)
@@ -45,7 +50,7 @@ func (l *Lifecycle) dispatchResolver(ctx context.Context, log *slog.Logger, numb
 	wtPath, err := l.WT.AddDetached(ctx, fmt.Sprintf("resolve-%d", number), pr.HeadRefOid)
 	if err != nil {
 		log.Error("worktree add detached failed", "err", err)
-		l.resolverFailCleanup(ctx, log, number)
+		l.failCleanup(ctx, number)
 		return
 	}
 	defer func() { _ = l.WT.Remove(ctx, fmt.Sprintf("resolve-%d", number)) }()
@@ -114,12 +119,15 @@ func (l *Lifecycle) resolverSuccessCleanup(ctx context.Context, log *slog.Logger
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
 	// Force-push invalidates any prior approval under branch protection's
 	// "dismiss stale reviews" rule; flip labels back so the reviewer
-	// scheduler re-queues this PR for a fresh pass.
-	if l.DoneLabel != "" {
-		_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.DoneLabel)
-	}
+	// scheduler re-queues this PR for a fresh pass. Add ReviewLabel BEFORE
+	// removing DoneLabel so the PR is never momentarily absent both labels
+	// (which would otherwise let the merger detector observe claude-merge
+	// alone).
 	if l.ReviewLabel != "" {
 		_ = l.GH.AddLabel(ctx, l.Repo, number, l.ReviewLabel)
+	}
+	if l.DoneLabel != "" {
+		_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.DoneLabel)
 	}
 	_ = l.releaseWithRetry(ctx, claim.KindResolver, number, true)
 }

@@ -54,10 +54,10 @@ type Lifecycle struct {
 	// Merger-only field. Consumed when Kind == KindMerger.
 	ResolveConflictLabel string // queue label for the resolver, set by merger on DIRTY
 
-	// Test-only seam. When nil, the resolver calls l.Docker.Run via the
-	// real docker.Runner; tests can substitute a stub that returns a
-	// predetermined (code, err) without spinning a container.
-	dockerRunFn func() (int, error)
+	// Test-only seam for dispatchResolver. When nil, the resolver calls
+	// l.Docker.Run via the real docker.Runner; tests can substitute a stub
+	// that returns a predetermined (code, err) without spinning a container.
+	resolverDockerRunFn func() (int, error)
 }
 
 // Dispatch implements scheduler.Dispatcher.
