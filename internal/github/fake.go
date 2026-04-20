@@ -19,6 +19,7 @@ type FakeClient struct {
 	Refs      map[string]string    // ref name → sha
 	Labels    map[string]struct{}  // label name → presence
 	Reviews   map[int][]Review     // PR number → reviews
+	BlockedBy map[int]int          // issue number → open blocker count
 	DefaultBr string
 
 	// Hooks for injecting errors in specific calls. Leave nil to disable.
@@ -35,6 +36,7 @@ func NewFake() *FakeClient {
 		Refs:      map[string]string{},
 		Labels:    map[string]struct{}{},
 		Reviews:   map[int][]Review{},
+		BlockedBy: map[int]int{},
 		DefaultBr: "main",
 	}
 }
@@ -248,4 +250,10 @@ func (f *FakeClient) ListReviews(ctx context.Context, r Repo, prNumber int) ([]R
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return append([]Review(nil), f.Reviews[prNumber]...), nil
+}
+
+func (f *FakeClient) CountOpenBlockers(ctx context.Context, r Repo, n int) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.BlockedBy[n], nil
 }

@@ -189,3 +189,30 @@ exit 1
 		t.Fatalf("error should propagate stderr: %v", err)
 	}
 }
+
+func TestCountOpenBlockers(t *testing.T) {
+	body := `[{"state":"open"},{"state":"closed"},{"state":"open"}]`
+	bin := fakeBin(t, `cat <<'EOF'
+`+body+`
+EOF`)
+	c := newGhClientWithBin(bin)
+	got, err := c.CountOpenBlockers(context.Background(), Repo{Owner: "a", Name: "b"}, 42)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 2 {
+		t.Fatalf("want 2 open blockers, got %d", got)
+	}
+}
+
+func TestCountOpenBlockersEmpty(t *testing.T) {
+	bin := fakeBin(t, `echo '[]'`)
+	c := newGhClientWithBin(bin)
+	got, err := c.CountOpenBlockers(context.Background(), Repo{Owner: "a", Name: "b"}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got != 0 {
+		t.Fatalf("want 0 blockers, got %d", got)
+	}
+}
