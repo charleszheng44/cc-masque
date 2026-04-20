@@ -8,7 +8,7 @@
 set -euo pipefail
 
 : "${CC_ROLE:?CC_ROLE must be set}"
-: "${CC_MODEL:=claude-sonnet-4-6}"
+: "${CC_MODEL:=claude-opus-4-7}"
 
 # CC_MAX_TURNS is optional; absent/empty means no turn cap.
 max_turns_args=()
