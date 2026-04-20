@@ -96,6 +96,21 @@ case "$CC_ROLE" in
       "${max_turns_args[@]}" \
       --dangerously-skip-permissions
     ;;
+  resolver)
+    : "${CC_PR_NUM:?CC_PR_NUM required}"
+    : "${CC_BASE_BRANCH:?CC_BASE_BRANCH required}"
+    : "${CC_HEAD_BRANCH:?CC_HEAD_BRANCH required}"
+
+    gh pr view "$CC_PR_NUM" -R "$CC_REPO" --json number,title,body,baseRefName,headRefName \
+      -q '"# PR #\(.number): \(.title)\n\nBase: \(.baseRefName)\nHead: \(.headRefName)\n\n\(.body)"' > /tmp/pr.md
+
+    PROMPT="You are the cc-crew resolver. Read /tmp/pr.md. Rebase ${CC_HEAD_BRANCH} onto origin/${CC_BASE_BRANCH}, resolve any merge conflicts, and git push --force-with-lease. Follow your CLAUDE.md instructions exactly."
+
+    exec claude -p "$PROMPT" \
+      --model "$CC_MODEL" \
+      "${max_turns_args[@]}" \
+      --dangerously-skip-permissions
+    ;;
   *)
     echo "unknown CC_ROLE: $CC_ROLE" >&2
     exit 64
