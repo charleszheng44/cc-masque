@@ -22,6 +22,7 @@ func Parse(flags []string, getenv func(string) string, pwd string) (Config, erro
 	repoDir := fs.String("repo", orDefault(getenv("CC_REPO"), pwd), "Local repo path")
 	fs.IntVar(&c.MaxImplementers, "max-implementers", envInt(getenv, "CC_MAX_IMPLEMENTERS", c.MaxImplementers), "Max concurrent implementer tasks")
 	fs.IntVar(&c.MaxReviewers, "max-reviewers", envInt(getenv, "CC_MAX_REVIEWERS", c.MaxReviewers), "Max concurrent reviewer tasks")
+	fs.IntVar(&c.MaxMergers, "max-mergers", envInt(getenv, "CC_MAX_MERGERS", c.MaxMergers), "Max concurrent merger tasks (0 disables)")
 
 	pollSecs := fs.Int("poll-seconds", envInt(getenv, "CC_POLL_SECONDS", int(c.PollInterval/time.Second)), "Tick interval (seconds)")
 	reclaimSecs := fs.Int("reclaim-seconds", envInt(getenv, "CC_RECLAIM_SECONDS", int(c.ReclaimAfter/time.Second)), "Stale-lock age threshold")

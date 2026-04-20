@@ -92,6 +92,33 @@ func TestPathsForAddresser(t *testing.T) {
 	}
 }
 
+func TestPathsForTable(t *testing.T) {
+	cases := []struct {
+		name      string
+		kind      Kind
+		number    int
+		lockRef   string
+		refPrefix string
+	}{
+		{"implementer", KindImplementer, 42, "refs/heads/claude/issue-42", "cc-crew/claim/issue-42/"},
+		{"reviewer", KindReviewer, 7, "refs/cc-crew/review-lock/pr-7", "cc-crew/review-claim/pr-7/"},
+		{"addresser", KindAddresser, 7, "refs/cc-crew/address-lock/pr-7", "cc-crew/address-claim/pr-7/"},
+		{"merger", KindMerger, 99, "refs/cc-crew/merge-lock/pr-99", "cc-crew/merge-claim/pr-99/"},
+		{"resolver", KindResolver, 99, "refs/cc-crew/resolve-lock/pr-99", "cc-crew/resolve-claim/pr-99/"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			p := PathsFor(tc.kind, tc.number)
+			if p.LockRef != tc.lockRef {
+				t.Errorf("LockRef = %q, want %q", p.LockRef, tc.lockRef)
+			}
+			if p.RefPrefix != tc.refPrefix {
+				t.Errorf("RefPrefix = %q, want %q", p.RefPrefix, tc.refPrefix)
+			}
+		})
+	}
+}
+
 func TestTryClaimAddresser(t *testing.T) {
 	f := github.NewFake()
 	r := github.Repo{Owner: "a", Name: "b"}

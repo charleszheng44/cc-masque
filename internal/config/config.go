@@ -10,6 +10,7 @@ type Config struct {
 
 	MaxImplementers int
 	MaxReviewers    int
+	MaxMergers      int
 
 	PollInterval      time.Duration
 	ReclaimAfter      time.Duration
@@ -29,6 +30,13 @@ type Config struct {
 	AddressedLabel  string
 	MaxCycles       int
 	Continuous      bool
+
+	// Auto-merger feature (spec 2026-04-20).
+	MergeLabel           string
+	MergingLabel         string
+	ResolveConflictLabel string
+	ResolvingLabel       string
+	ConflictBlockedLabel string
 
 	AutoReview bool
 
@@ -55,6 +63,7 @@ func Defaults() Config {
 	return Config{
 		MaxImplementers:   3,
 		MaxReviewers:      2,
+		MaxMergers:        2,
 		PollInterval:      60 * time.Second,
 		ReclaimAfter:      30 * time.Minute,
 		ImplTaskTimeout:   60 * time.Minute,
@@ -73,6 +82,12 @@ func Defaults() Config {
 		MaxCycles:       3,
 		Continuous:      true,
 
+		MergeLabel:           "claude-merge",
+		MergingLabel:         "claude-merging",
+		ResolveConflictLabel: "claude-resolve-conflict",
+		ResolvingLabel:       "claude-resolving",
+		ConflictBlockedLabel: "claude-conflict-blocked",
+
 		// 0 = unlimited; only enforced when the user explicitly sets a cap.
 		ImplMaxTurns:   0,
 		ReviewMaxTurns: 0,
@@ -87,8 +102,8 @@ func (c Config) Validate() error {
 	if c.RepoDir == "" {
 		return errors.New("RepoDir is required")
 	}
-	if c.MaxImplementers < 0 || c.MaxReviewers < 0 {
-		return errors.New("max-implementers and max-reviewers must be >= 0")
+	if c.MaxImplementers < 0 || c.MaxReviewers < 0 || c.MaxMergers < 0 {
+		return errors.New("max-implementers, max-reviewers and max-mergers must be >= 0")
 	}
 	if c.MaxImplementers == 0 && c.MaxReviewers == 0 {
 		return errors.New("at least one of max-implementers/max-reviewers must be > 0")
@@ -113,6 +128,11 @@ func (c Config) Validate() error {
 		}
 		if c.ReviewerGitName == "" || c.ReviewerGitEmail == "" {
 			return errors.New("REVIEWER_GIT_NAME and REVIEWER_GIT_EMAIL are required when reviewer is enabled")
+		}
+	}
+	if c.MaxMergers > 0 {
+		if c.ReviewerGHToken == "" {
+			return errors.New("GH_TOKEN_REVIEWER is required when merger is enabled")
 		}
 	}
 	if c.ClaudeOAuthToken == "" && c.AnthropicAPIKey == "" {
