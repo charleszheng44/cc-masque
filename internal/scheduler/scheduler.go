@@ -96,6 +96,14 @@ func (s *Scheduler) listCandidates(ctx context.Context) ([]int, error) {
 		}
 		nums := make([]int, 0, len(issues))
 		for _, i := range issues {
+			count, err := s.GH.CountOpenBlockers(ctx, s.Repo, i.Number)
+			if err != nil {
+				return nil, err
+			}
+			if count > 0 {
+				s.Log.Debug("skipping blocked issue", "number", i.Number, "blockers", count)
+				continue
+			}
 			nums = append(nums, i.Number)
 		}
 		sortAsc(nums)

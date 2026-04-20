@@ -42,5 +42,8 @@ type Client interface {
 	// Reviews
 	ListReviews(ctx context.Context, r Repo, prNumber int) ([]Review, error)
 
+	// Dependencies
+	CountOpenBlockers(ctx context.Context, r Repo, issueNumber int) (int, error)
+
 	// PR create is done by Claude inside containers; not here.
 }

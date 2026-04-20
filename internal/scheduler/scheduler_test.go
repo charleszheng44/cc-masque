@@ -91,6 +91,30 @@ func (d *fakeDispatcher) calls() []int {
 	return out
 }
 
+func TestListCandidatesSkipsBlockedIssues(t *testing.T) {
+	f := github.NewFake()
+	r := github.Repo{Owner: "a", Name: "b"}
+	f.Refs["refs/heads/main"] = "basesha"
+	f.Issues[5] = &github.Issue{Number: 5, State: "open", Labels: []string{"claude-task"}}
+	f.Issues[6] = &github.Issue{Number: 6, State: "open", Labels: []string{"claude-task"}}
+	f.BlockedBy[6] = 1 // issue 6 is blocked by one open issue
+
+	s := &Scheduler{
+		Kind: claim.KindImplementer, Sem: NewSemaphore(2),
+		Claimer: claim.New(f, r), GH: f, Repo: r,
+		Dispatcher: &countingDispatcher{},
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-task", LockLabel: "claude-processing",
+	}
+	got, err := s.listCandidates(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != 5 {
+		t.Fatalf("want [5], got %v", got)
+	}
+}
+
 func TestSchedulerAddresserListsAndClaims(t *testing.T) {
 	f := github.NewFake()
 	repo := github.Repo{Owner: "a", Name: "b"}

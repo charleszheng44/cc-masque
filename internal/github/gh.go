@@ -304,5 +304,29 @@ func (c *ghClient) CreateLabel(ctx context.Context, r Repo, name, color, descrip
 	return nil
 }
 
+type ghBlockedByItem struct {
+	State string `json:"state"`
+}
+
+func (c *ghClient) CountOpenBlockers(ctx context.Context, r Repo, n int) (int, error) {
+	out, err := c.runGh(ctx, "api",
+		"-H", "X-GitHub-Api-Version: 2025-08-21",
+		fmt.Sprintf("repos/%s/issues/%d/dependencies/blocked_by", r.String(), n))
+	if err != nil {
+		return 0, err
+	}
+	var items []ghBlockedByItem
+	if err := json.Unmarshal(out, &items); err != nil {
+		return 0, fmt.Errorf("parse blocked_by: %w", err)
+	}
+	count := 0
+	for _, item := range items {
+		if strings.ToLower(item.State) == "open" {
+			count++
+		}
+	}
+	return count, nil
+}
+
 // (helper used by tests to override the binary)
 func newGhClientWithBin(bin string) *ghClient { return &ghClient{ghBin: bin} }
