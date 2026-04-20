@@ -239,13 +239,16 @@ func (l *Lifecycle) buildRunSpec(number int, wtPath string) docker.RunSpec {
 	if l.MaxTurns > 0 {
 		env["CC_MAX_TURNS"] = fmt.Sprint(l.MaxTurns)
 	}
+	var prefix string
 	if l.Kind == claim.KindImplementer {
 		labels["cc-crew.issue"] = fmt.Sprint(number)
 		env["CC_ISSUE_NUM"] = fmt.Sprint(number)
 		env["CC_BASE_BRANCH"] = l.BaseBranch
+		prefix = fmt.Sprintf("[issue-%d] ", number)
 	} else {
 		labels["cc-crew.pr"] = fmt.Sprint(number)
 		env["CC_PR_NUM"] = fmt.Sprint(number)
+		prefix = fmt.Sprintf("[pr-%d] ", number)
 	}
 
 	return docker.RunSpec{
@@ -253,8 +256,8 @@ func (l *Lifecycle) buildRunSpec(number int, wtPath string) docker.RunSpec {
 		Name:   name,
 		Labels: labels,
 		Env:    env,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
+		Stdout: NewPrefixedWriter(os.Stdout, prefix, number),
+		Stderr: NewPrefixedWriter(os.Stderr, prefix, number),
 		Mounts: []docker.Mount{
 			{HostPath: wtPath, ContainerPath: "/workspace"},
 			{
@@ -335,13 +338,14 @@ func (l *Lifecycle) buildAddresserRunSpec(prNumber, issueNum int, reviewIDs []in
 	if l.MaxTurns > 0 {
 		env["CC_MAX_TURNS"] = fmt.Sprint(l.MaxTurns)
 	}
+	prPrefix := fmt.Sprintf("[pr-%d] ", prNumber)
 	return docker.RunSpec{
 		Image:  l.Image,
 		Name:   name,
 		Labels: labels,
 		Env:    env,
-		Stdout: os.Stdout,
-		Stderr: os.Stderr,
+		Stdout: NewPrefixedWriter(os.Stdout, prPrefix, prNumber),
+		Stderr: NewPrefixedWriter(os.Stderr, prPrefix, prNumber),
 		Mounts: []docker.Mount{
 			{HostPath: wtPath, ContainerPath: "/workspace"},
 			{
