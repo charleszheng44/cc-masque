@@ -30,9 +30,10 @@ type initOptions struct {
 	Errout io.Writer
 }
 
-// buildLabelSpecs returns the nine label specs with their canonical colors
-// and descriptions, using the provided getenv to honor the same CC_*_LABEL
-// overrides as the other subcommands. Pass os.Getenv in production.
+// buildLabelSpecs returns the fourteen label specs with their canonical
+// colors and descriptions, using the provided getenv to honor the same
+// CC_*_LABEL overrides as the other subcommands. Pass os.Getenv in
+// production.
 func buildLabelSpecs(getenv func(string) string) []labelSpec {
 	d := config.Defaults()
 	return []labelSpec{
@@ -54,6 +55,16 @@ func buildLabelSpecs(getenv func(string) string) []labelSpec {
 			Color: "e99695", Description: "Implementer is addressing review feedback"},
 		{Name: firstNonEmpty(getenv("CC_ADDRESSED_LABEL"), d.AddressedLabel),
 			Color: "fbca04", Description: "Implementer pushed updates addressing the review"},
+		{Name: firstNonEmpty(getenv("CC_MERGE_LABEL"), d.MergeLabel),
+			Color: "2e7d32", Description: "Queue an approved PR for the cc-crew merger"},
+		{Name: firstNonEmpty(getenv("CC_MERGING_LABEL"), d.MergingLabel),
+			Color: "1b5e20", Description: "Merger is working on this PR"},
+		{Name: firstNonEmpty(getenv("CC_RESOLVE_CONFLICT_LABEL"), d.ResolveConflictLabel),
+			Color: "bf360c", Description: "Queue a PR for the resolver to fix merge conflicts"},
+		{Name: firstNonEmpty(getenv("CC_RESOLVING_LABEL"), d.ResolvingLabel),
+			Color: "e65100", Description: "Resolver is working on this PR"},
+		{Name: firstNonEmpty(getenv("CC_CONFLICT_BLOCKED_LABEL"), d.ConflictBlockedLabel),
+			Color: "b71c1c", Description: "Conflict resolution failed; human attention needed"},
 	}
 }
 

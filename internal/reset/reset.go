@@ -24,6 +24,10 @@ var refPrefixes = []string{
 	"cc-crew/address-claim/pr-",
 	"cc-crew/addressed/pr-",
 	"cc-crew/rereviewed/pr-",
+	"cc-crew/merge-lock/pr-",
+	"cc-crew/merge-claim/pr-",
+	"cc-crew/resolve-lock/pr-",
+	"cc-crew/resolve-claim/pr-",
 	// LEGACY paths from before the 2026-04-18 cc-crew namespace
 	// migration. Harmless to keep listing — ListMatchingRefs returns
 	// an empty slice when nothing exists under the prefix. Remove in
@@ -59,6 +63,12 @@ type Options struct {
 	AddressLabel    string
 	AddressingLabel string
 	AddressedLabel  string
+
+	MergeLabel           string
+	MergingLabel         string
+	ResolveConflictLabel string
+	ResolvingLabel       string
+	ConflictBlockedLabel string
 }
 
 // Compute builds a Plan without making any changes.
@@ -100,7 +110,11 @@ func Compute(ctx context.Context, o Options) (Plan, error) {
 			}
 		}
 	}
-	for _, label := range []string{o.ReviewingLabel, o.ReviewedLabel, o.AddressingLabel, o.AddressedLabel} {
+	for _, label := range []string{
+		o.ReviewingLabel, o.ReviewedLabel,
+		o.AddressingLabel, o.AddressedLabel,
+		o.MergingLabel, o.ResolvingLabel, o.ConflictBlockedLabel,
+	} {
 		if label == "" {
 			continue
 		}
@@ -189,6 +203,21 @@ func Execute(ctx context.Context, o Options, p Plan, out io.Writer) error {
 		}
 		if o.AddressedLabel != "" {
 			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.AddressedLabel)
+		}
+		if o.MergingLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.MergingLabel)
+		}
+		if o.ResolvingLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.ResolvingLabel)
+		}
+		if o.ConflictBlockedLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.ConflictBlockedLabel)
+		}
+		if o.MergeLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.MergeLabel)
+		}
+		if o.ResolveConflictLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.ResolveConflictLabel)
 		}
 		_ = o.GH.AddLabel(ctx, o.Repo, n, o.ReviewLabel)
 	}

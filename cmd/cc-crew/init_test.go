@@ -141,7 +141,29 @@ func TestBuildLabelSpecsHonorsEnvOverrides(t *testing.T) {
 	if !found {
 		t.Fatalf("expected a spec named foo, got %+v", got)
 	}
-	if len(got) != 9 {
-		t.Fatalf("expected 9 specs, got %d", len(got))
+	if len(got) != 14 {
+		t.Fatalf("expected 14 specs, got %d", len(got))
+	}
+}
+
+func TestBuildLabelSpecsIncludesMergerAndResolverLabels(t *testing.T) {
+	getenv := func(string) string { return "" }
+	specs := buildLabelSpecs(getenv)
+	want := map[string]bool{
+		"claude-merge":            false,
+		"claude-merging":          false,
+		"claude-resolve-conflict": false,
+		"claude-resolving":        false,
+		"claude-conflict-blocked": false,
+	}
+	for _, s := range specs {
+		if _, ok := want[s.Name]; ok {
+			want[s.Name] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Errorf("label %q missing from buildLabelSpecs", name)
+		}
 	}
 }

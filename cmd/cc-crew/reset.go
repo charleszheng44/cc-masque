@@ -89,6 +89,12 @@ func runReset(args []string) int {
 		AddressLabel:    firstNonEmpty(os.Getenv("CC_ADDRESS_LABEL"), defaults.AddressLabel),
 		AddressingLabel: firstNonEmpty(os.Getenv("CC_ADDRESSING_LABEL"), defaults.AddressingLabel),
 		AddressedLabel:  firstNonEmpty(os.Getenv("CC_ADDRESSED_LABEL"), defaults.AddressedLabel),
+
+		MergeLabel:           firstNonEmpty(os.Getenv("CC_MERGE_LABEL"), defaults.MergeLabel),
+		MergingLabel:         firstNonEmpty(os.Getenv("CC_MERGING_LABEL"), defaults.MergingLabel),
+		ResolveConflictLabel: firstNonEmpty(os.Getenv("CC_RESOLVE_CONFLICT_LABEL"), defaults.ResolveConflictLabel),
+		ResolvingLabel:       firstNonEmpty(os.Getenv("CC_RESOLVING_LABEL"), defaults.ResolvingLabel),
+		ConflictBlockedLabel: firstNonEmpty(os.Getenv("CC_CONFLICT_BLOCKED_LABEL"), defaults.ConflictBlockedLabel),
 	}
 	plan, err := reset.Compute(ctx, o)
 	if err != nil {
