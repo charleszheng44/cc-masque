@@ -79,22 +79,63 @@ func TestMergerDirtyDispatchesResolverAndReleases(t *testing.T) {
 	}
 }
 
-func TestMergerBlockedIsTerminal(t *testing.T) {
+func TestMergerTerminalMergeStates(t *testing.T) {
+	// Each state in this table must route to the terminal branch per spec:
+	// BLOCKED/DRAFT/UNKNOWN (and empty) are terminal, as is any unrecognized
+	// state value (default arm).
+	cases := []struct {
+		name  string
+		state string
+	}{
+		{"blocked", "BLOCKED"},
+		{"draft", "DRAFT"},
+		{"unknown", "UNKNOWN"},
+		{"empty", ""},
+		{"bogus", "NOT_A_REAL_STATE"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := github.NewFake()
+			repo := github.Repo{Owner: "o", Name: "n"}
+			f.PRs[4] = &github.PullRequest{
+				Number: 4, State: "open", HeadRefOid: "sha", BaseRefName: "main",
+				Labels: []string{"claude-merge", "claude-merging"}, MergeStateStatus: tc.state,
+			}
+			lc := newMergerLifecycle(f, repo)
+			lc.dispatchMerger(context.Background(), slog.Default(), 4)
+			if !containsLabel(f.PRs[4].Labels, "claude-conflict-blocked") {
+				t.Errorf("state %q: claude-conflict-blocked not added: %v", tc.state, f.PRs[4].Labels)
+			}
+			if containsLabel(f.PRs[4].Labels, "claude-merge") {
+				t.Errorf("state %q: claude-merge should be removed on terminal: %v", tc.state, f.PRs[4].Labels)
+			}
+			if len(f.Comments[4]) == 0 {
+				t.Errorf("state %q: expected escalation comment on PR", tc.state)
+			}
+		})
+	}
+}
+
+// If ResolveConflictLabel is not configured, a DIRTY PR cannot hand off to
+// a resolver — silently no-op'ing would strand the PR in a loop. Verify
+// the merger fails loud by routing to terminal instead.
+func TestMergerDirtyWithoutResolveLabelIsTerminal(t *testing.T) {
 	f := github.NewFake()
 	repo := github.Repo{Owner: "o", Name: "n"}
-	f.PRs[4] = &github.PullRequest{
-		Number: 4, State: "open", HeadRefOid: "sha", BaseRefName: "main",
-		Labels: []string{"claude-merge", "claude-merging"}, MergeStateStatus: "BLOCKED",
+	f.PRs[9] = &github.PullRequest{
+		Number: 9, State: "open", HeadRefOid: "sha", BaseRefName: "main",
+		Labels: []string{"claude-merge", "claude-merging"}, MergeStateStatus: "DIRTY",
 	}
 	lc := newMergerLifecycle(f, repo)
-	lc.dispatchMerger(context.Background(), slog.Default(), 4)
-	if !containsLabel(f.PRs[4].Labels, "claude-conflict-blocked") {
-		t.Errorf("claude-conflict-blocked not added: %v", f.PRs[4].Labels)
+	lc.ResolveConflictLabel = ""
+	lc.dispatchMerger(context.Background(), slog.Default(), 9)
+	if !containsLabel(f.PRs[9].Labels, "claude-conflict-blocked") {
+		t.Errorf("expected terminal escalation when resolver label unconfigured: %v", f.PRs[9].Labels)
 	}
-	if containsLabel(f.PRs[4].Labels, "claude-merge") {
-		t.Errorf("claude-merge should be removed on terminal: %v", f.PRs[4].Labels)
+	if containsLabel(f.PRs[9].Labels, "claude-merge") {
+		t.Errorf("claude-merge should be removed on terminal: %v", f.PRs[9].Labels)
 	}
-	if len(f.Comments[4]) == 0 {
+	if len(f.Comments[9]) == 0 {
 		t.Error("expected escalation comment on PR")
 	}
 }
