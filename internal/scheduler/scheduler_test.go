@@ -149,3 +149,67 @@ func TestSchedulerAddresserListsAndClaims(t *testing.T) {
 		t.Fatalf("address-lock not created; refs = %v", keys(f.Refs))
 	}
 }
+
+func TestSchedulerMergerListsAndClaims(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[11] = &github.PullRequest{
+		Number: 11, State: "open", HeadRefOid: "sha11",
+		Labels: []string{"claude-merge"},
+	}
+	f.PRs[12] = &github.PullRequest{
+		Number: 12, State: "open", HeadRefOid: "sha12",
+		Labels: []string{"claude-merge", "claude-merging"}, // already locked — must be skipped
+	}
+	disp := &fakeDispatcher{}
+	s := &Scheduler{
+		Kind: claim.KindMerger, Sem: NewSemaphore(1),
+		Claimer: claim.New(f, repo), GH: f, Repo: repo, Dispatcher: disp,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-merge", LockLabel: "claude-merging",
+	}
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for len(disp.calls()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := disp.calls()
+	if len(got) != 1 || got[0] != 11 {
+		t.Fatalf("dispatched = %v, want [11]", got)
+	}
+	if _, ok := f.Refs["refs/cc-crew/merge-lock/pr-11"]; !ok {
+		t.Fatalf("merge-lock not created; refs = %v", keys(f.Refs))
+	}
+}
+
+func TestSchedulerResolverListsAndClaims(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[21] = &github.PullRequest{
+		Number: 21, State: "open", HeadRefOid: "sha21",
+		Labels: []string{"claude-resolve-conflict"},
+	}
+	disp := &fakeDispatcher{}
+	s := &Scheduler{
+		Kind: claim.KindResolver, Sem: NewSemaphore(1),
+		Claimer: claim.New(f, repo), GH: f, Repo: repo, Dispatcher: disp,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-resolve-conflict", LockLabel: "claude-resolving",
+	}
+	if err := s.Tick(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for len(disp.calls()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := disp.calls()
+	if len(got) != 1 || got[0] != 21 {
+		t.Fatalf("dispatched = %v, want [21]", got)
+	}
+	if _, ok := f.Refs["refs/cc-crew/resolve-lock/pr-21"]; !ok {
+		t.Fatalf("resolve-lock not created; refs = %v", keys(f.Refs))
+	}
+}
