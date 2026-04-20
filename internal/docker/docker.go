@@ -73,6 +73,12 @@ func (r *Runner) Run(ctx context.Context, s RunSpec) (int, error) {
 	cmd.Stdout = s.Stdout
 	cmd.Stderr = s.Stderr
 	err := cmd.Run()
+	if c, ok := s.Stdout.(io.Closer); ok {
+		_ = c.Close()
+	}
+	if c, ok := s.Stderr.(io.Closer); ok {
+		_ = c.Close()
+	}
 	if ctx.Err() != nil {
 		// Context canceled (timeout or caller cancellation).
 		return -1, ctx.Err()
