@@ -45,6 +45,10 @@ type Lifecycle struct {
 	GitEmail        string
 
 	BaseBranch string
+
+	// Merger-only fields. Consumed when Kind == KindMerger.
+	ResolveConflictLabel string // queue label for the resolver, set by merger on DIRTY
+	ConflictBlockedLabel string // terminal-failure label
 }
 
 // Dispatch implements scheduler.Dispatcher.
@@ -59,6 +63,8 @@ func (l *Lifecycle) Dispatch(ctx context.Context, number int) {
 		l.dispatchReviewer(ctx, log, number)
 	case claim.KindAddresser:
 		l.dispatchAddresser(ctx, log, number)
+	case claim.KindMerger:
+		l.dispatchMerger(ctx, log, number)
 	}
 }
 
@@ -451,6 +457,10 @@ func kindName(k claim.Kind) string {
 		return "implementer"
 	case claim.KindAddresser:
 		return "addresser"
+	case claim.KindMerger:
+		return "merger"
+	case claim.KindResolver:
+		return "resolver"
 	}
 	return "reviewer"
 }
