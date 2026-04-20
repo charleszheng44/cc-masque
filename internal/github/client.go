@@ -14,6 +14,35 @@ var ErrRefExists = errors.New("github: ref already exists")
 // and no action is needed.
 var ErrLabelExists = errors.New("github: label already exists")
 
+// ErrMergeConflict is returned by MergePR when GitHub rejects the merge
+// because the PR has unresolved conflicts against the base branch.
+var ErrMergeConflict = errors.New("github: merge conflict")
+
+// MergeMethod selects the strategy used when merging a PR.
+type MergeMethod string
+
+const (
+	MergeMethodRebase MergeMethod = "rebase"
+	MergeMethodSquash MergeMethod = "squash"
+	MergeMethodMerge  MergeMethod = "merge"
+)
+
+// UpdateMethod selects the strategy used when updating a PR branch
+// against its base.
+type UpdateMethod string
+
+const (
+	UpdateMethodRebase UpdateMethod = "rebase"
+	UpdateMethodMerge  UpdateMethod = "merge"
+)
+
+// CheckRun is a GitHub check run attached to a commit SHA.
+type CheckRun struct {
+	Name       string // display name, e.g. "build"
+	Status     string // queued | in_progress | completed | waiting | pending
+	Conclusion string // success | failure | neutral | cancelled | skipped | timed_out | action_required | stale | startup_failure | "" (if not completed)
+}
+
 // Client is the surface area the rest of cc-crew depends on.
 // Implementations: *ghClient (production), *FakeClient (tests).
 type Client interface {
@@ -41,6 +70,16 @@ type Client interface {
 
 	// Reviews
 	ListReviews(ctx context.Context, r Repo, prNumber int) ([]Review, error)
+
+	// Merge / branch updates
+	MergePR(ctx context.Context, r Repo, number int, expectedHeadSha string, method MergeMethod, deleteBranch bool) error // returns ErrMergeConflict on conflict
+	UpdateBranch(ctx context.Context, r Repo, number int, expectedHeadSha string, method UpdateMethod) error
+
+	// Status checks
+	GetCheckRuns(ctx context.Context, r Repo, sha string) ([]CheckRun, error)
+
+	// Comments
+	CreateComment(ctx context.Context, r Repo, issueOrPRNumber int, body string) error
 
 	// Dependencies
 	CountOpenBlockers(ctx context.Context, r Repo, issueNumber int) (int, error)

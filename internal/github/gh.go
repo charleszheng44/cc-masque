@@ -338,5 +338,100 @@ func (c *ghClient) CountOpenBlockers(ctx context.Context, r Repo, n int) (int, e
 	return count, nil
 }
 
+// MergePR invokes `gh pr merge` with the requested strategy. When
+// --match-head-commit is supplied, gh aborts the merge if the branch has
+// moved — this protects against racing with a force-push. Conflict-shaped
+// stderr is mapped to ErrMergeConflict so the merger can hand off to the
+// resolver.
+func (c *ghClient) MergePR(ctx context.Context, r Repo, n int, expectedSha string, method MergeMethod, deleteBranch bool) error {
+	args := []string{"pr", "merge", fmt.Sprint(n), "-R", r.String()}
+	switch method {
+	case MergeMethodRebase:
+		args = append(args, "--rebase")
+	case MergeMethodSquash:
+		args = append(args, "--squash")
+	case MergeMethodMerge:
+		args = append(args, "--merge")
+	default:
+		return fmt.Errorf("unknown merge method: %s", method)
+	}
+	if deleteBranch {
+		args = append(args, "--delete-branch")
+	}
+	if expectedSha != "" {
+		args = append(args, "--match-head-commit", expectedSha)
+	}
+	cmd := exec.CommandContext(ctx, c.ghBin, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		low := strings.ToLower(stderr.String())
+		if strings.Contains(low, "merge conflict") ||
+			strings.Contains(low, "not mergeable") ||
+			strings.Contains(low, "not in a mergeable state") ||
+			strings.Contains(low, "cannot be cleanly") {
+			return ErrMergeConflict
+		}
+		return fmt.Errorf("gh pr merge %d: %w\nstderr: %s", n, err, stderr.String())
+	}
+	return nil
+}
+
+// UpdateBranch calls PUT /repos/{owner}/{repo}/pulls/{n}/update-branch with
+// the given update method. expectedSha is passed as expected_head_sha so
+// GitHub rejects the call if the branch has moved since we read it.
+func (c *ghClient) UpdateBranch(ctx context.Context, r Repo, n int, expectedSha string, method UpdateMethod) error {
+	body := fmt.Sprintf(`{"expected_head_sha":%q,"update_method":%q}`, expectedSha, string(method))
+	cmd := exec.CommandContext(ctx, c.ghBin, "api", "-X", "PUT",
+		fmt.Sprintf("repos/%s/pulls/%d/update-branch", r.String(), n),
+		"--input", "-")
+	cmd.Stdin = strings.NewReader(body)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh api update-branch PR %d: %w\nstderr: %s", n, err, stderr.String())
+	}
+	return nil
+}
+
+type ghCheckRunsResp struct {
+	CheckRuns []struct {
+		Name       string `json:"name"`
+		Status     string `json:"status"`
+		Conclusion string `json:"conclusion"`
+	} `json:"check_runs"`
+}
+
+func (c *ghClient) GetCheckRuns(ctx context.Context, r Repo, sha string) ([]CheckRun, error) {
+	out, err := c.runGh(ctx, "api",
+		fmt.Sprintf("repos/%s/commits/%s/check-runs?per_page=100", r.String(), sha))
+	if err != nil {
+		return nil, err
+	}
+	var raw ghCheckRunsResp
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parse check-runs: %w", err)
+	}
+	runs := make([]CheckRun, 0, len(raw.CheckRuns))
+	for _, cr := range raw.CheckRuns {
+		runs = append(runs, CheckRun{Name: cr.Name, Status: cr.Status, Conclusion: cr.Conclusion})
+	}
+	return runs, nil
+}
+
+func (c *ghClient) CreateComment(ctx context.Context, r Repo, n int, body string) error {
+	bodyJSON := fmt.Sprintf(`{"body":%q}`, body)
+	cmd := exec.CommandContext(ctx, c.ghBin, "api", "-X", "POST",
+		fmt.Sprintf("repos/%s/issues/%d/comments", r.String(), n),
+		"--input", "-")
+	cmd.Stdin = strings.NewReader(bodyJSON)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("gh api create comment %d: %w\nstderr: %s", n, err, stderr.String())
+	}
+	return nil
+}
+
 // (helper used by tests to override the binary)
 func newGhClientWithBin(bin string) *ghClient { return &ghClient{ghBin: bin} }

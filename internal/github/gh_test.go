@@ -257,3 +257,202 @@ func TestCountOpenBlockersEmpty(t *testing.T) {
 		t.Fatalf("want 0 blockers, got %d", got)
 	}
 }
+
+func TestMergePRSuccess(t *testing.T) {
+	// Capture args to verify --rebase / --delete-branch / --match-head-commit.
+	bin := fakeBin(t, `echo "$@" >"$(dirname "$0")/args"
+exit 0
+`)
+	c := newGhClientWithBin(bin)
+	err := c.MergePR(context.Background(), Repo{Owner: "a", Name: "b"}, 42,
+		"deadbeef", MergeMethodRebase, true)
+	if err != nil {
+		t.Fatalf("MergePR: %v", err)
+	}
+	argsFile := filepath.Join(filepath.Dir(bin), "args")
+	raw, err := os.ReadFile(argsFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(raw)
+	for _, want := range []string{"pr", "merge", "42", "-R", "a/b", "--rebase", "--delete-branch", "--match-head-commit", "deadbeef"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("args missing %q: %s", want, got)
+		}
+	}
+}
+
+func TestMergePRMapsConflictStderrToErrMergeConflict(t *testing.T) {
+	cases := []string{
+		`echo "failed to merge: merge conflict between base and head" 1>&2
+exit 1
+`,
+		`echo "Pull request is not mergeable: the merge commit cannot be cleanly created" 1>&2
+exit 1
+`,
+		`echo "GraphQL: Pull request is not in a mergeable state (mergePullRequest)" 1>&2
+exit 1
+`,
+	}
+	for i, body := range cases {
+		bin := fakeBin(t, body)
+		c := newGhClientWithBin(bin)
+		err := c.MergePR(context.Background(), Repo{Owner: "a", Name: "b"}, 1,
+			"sha", MergeMethodRebase, true)
+		if err != ErrMergeConflict {
+			t.Errorf("case %d: want ErrMergeConflict, got %v", i, err)
+		}
+	}
+}
+
+func TestMergePRDoesNotMapUnrelatedErrorsToErrMergeConflict(t *testing.T) {
+	bin := fakeBin(t, `echo "HTTP 403: Resource not accessible by integration" 1>&2
+exit 1
+`)
+	c := newGhClientWithBin(bin)
+	err := c.MergePR(context.Background(), Repo{Owner: "a", Name: "b"}, 1,
+		"sha", MergeMethodRebase, true)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if err == ErrMergeConflict {
+		t.Fatalf("must NOT map 403 to ErrMergeConflict: %v", err)
+	}
+	if !strings.Contains(err.Error(), "Resource not accessible") {
+		t.Fatalf("stderr should be propagated: %v", err)
+	}
+}
+
+func TestMergePRRejectsUnknownMethod(t *testing.T) {
+	bin := fakeBin(t, `exit 0`)
+	c := newGhClientWithBin(bin)
+	err := c.MergePR(context.Background(), Repo{Owner: "a", Name: "b"}, 1,
+		"", MergeMethod("bogus"), false)
+	if err == nil {
+		t.Fatal("expected error for unknown merge method")
+	}
+	if !strings.Contains(err.Error(), "unknown merge method") {
+		t.Fatalf("want unknown-method error, got %v", err)
+	}
+}
+
+func TestUpdateBranchSendsExpectedHeadSha(t *testing.T) {
+	// Capture stdin so we can verify the JSON body.
+	bin := fakeBin(t, `cat - >"$(dirname "$0")/stdin"
+exit 0
+`)
+	c := newGhClientWithBin(bin)
+	err := c.UpdateBranch(context.Background(), Repo{Owner: "a", Name: "b"}, 42,
+		"deadbeef", UpdateMethodRebase)
+	if err != nil {
+		t.Fatalf("UpdateBranch: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(bin), "stdin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(raw)
+	if !strings.Contains(body, `"expected_head_sha":"deadbeef"`) {
+		t.Errorf("body missing expected_head_sha: %s", body)
+	}
+	if !strings.Contains(body, `"update_method":"rebase"`) {
+		t.Errorf("body missing update_method: %s", body)
+	}
+}
+
+func TestUpdateBranchPropagatesError(t *testing.T) {
+	bin := fakeBin(t, `echo "HTTP 422: Validation failed" 1>&2
+exit 1
+`)
+	c := newGhClientWithBin(bin)
+	err := c.UpdateBranch(context.Background(), Repo{Owner: "a", Name: "b"}, 42,
+		"deadbeef", UpdateMethodRebase)
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "Validation failed") {
+		t.Fatalf("stderr should be propagated: %v", err)
+	}
+}
+
+func TestGetCheckRunsParses(t *testing.T) {
+	body := `{"total_count":2,"check_runs":[
+	  {"name":"build","status":"completed","conclusion":"success"},
+	  {"name":"lint","status":"in_progress","conclusion":null}
+	]}`
+	bin := fakeBin(t, `cat <<'EOF'
+`+body+`
+EOF`)
+	c := newGhClientWithBin(bin)
+	got, err := c.GetCheckRuns(context.Background(), Repo{Owner: "a", Name: "b"}, "deadbeef")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 runs, got %d", len(got))
+	}
+	if got[0].Name != "build" || got[0].Status != "completed" || got[0].Conclusion != "success" {
+		t.Errorf("runs[0] = %+v", got[0])
+	}
+	if got[1].Name != "lint" || got[1].Conclusion != "" {
+		t.Errorf("runs[1] = %+v", got[1])
+	}
+}
+
+func TestGetCheckRunsEmpty(t *testing.T) {
+	bin := fakeBin(t, `echo '{"total_count":0,"check_runs":[]}'`)
+	c := newGhClientWithBin(bin)
+	got, err := c.GetCheckRuns(context.Background(), Repo{Owner: "a", Name: "b"}, "sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("want empty, got %+v", got)
+	}
+}
+
+func TestGetCheckRunsPropagatesError(t *testing.T) {
+	bin := fakeBin(t, `echo "HTTP 404: Not Found" 1>&2
+exit 1
+`)
+	c := newGhClientWithBin(bin)
+	_, err := c.GetCheckRuns(context.Background(), Repo{Owner: "a", Name: "b"}, "sha")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "Not Found") {
+		t.Fatalf("stderr should be propagated: %v", err)
+	}
+}
+
+func TestCreateCommentSendsBody(t *testing.T) {
+	bin := fakeBin(t, `cat - >"$(dirname "$0")/stdin"
+exit 0
+`)
+	c := newGhClientWithBin(bin)
+	err := c.CreateComment(context.Background(), Repo{Owner: "a", Name: "b"}, 42, "hello world")
+	if err != nil {
+		t.Fatalf("CreateComment: %v", err)
+	}
+	raw, err := os.ReadFile(filepath.Join(filepath.Dir(bin), "stdin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"body":"hello world"`) {
+		t.Errorf("stdin missing body: %s", string(raw))
+	}
+}
+
+func TestCreateCommentPropagatesError(t *testing.T) {
+	bin := fakeBin(t, `echo "HTTP 403: Forbidden" 1>&2
+exit 1
+`)
+	c := newGhClientWithBin(bin)
+	err := c.CreateComment(context.Background(), Repo{Owner: "a", Name: "b"}, 42, "body")
+	if err == nil {
+		t.Fatal("expected error")
+	}
+	if !strings.Contains(err.Error(), "Forbidden") {
+		t.Fatalf("stderr should be propagated: %v", err)
+	}
+}

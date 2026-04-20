@@ -12,32 +12,41 @@ var _ Client = (*FakeClient)(nil)
 
 // FakeClient is an in-memory Client for unit tests.
 type FakeClient struct {
-	mu        sync.Mutex
-	User      string
-	Issues    map[int]*Issue       // keyed by number
-	PRs       map[int]*PullRequest // keyed by number
-	Refs      map[string]string    // ref name → sha
-	Labels    map[string]struct{}  // label name → presence
-	Reviews   map[int][]Review     // PR number → reviews
-	BlockedBy map[int]int          // issue number → open blocker count
-	DefaultBr string
+	mu                 sync.Mutex
+	User               string
+	Issues             map[int]*Issue        // keyed by number
+	PRs                map[int]*PullRequest  // keyed by number
+	Refs               map[string]string     // ref name → sha
+	Labels             map[string]struct{}   // label name → presence
+	Reviews            map[int][]Review      // PR number → reviews
+	BlockedBy          map[int]int           // issue number → open blocker count
+	Comments           map[int][]string      // issue/PR number → posted comment bodies
+	CheckRuns          map[string][]CheckRun // SHA → check runs
+	UpdateBranchCalled map[int]bool          // PR number → UpdateBranch was called
+	DefaultBr          string
 
 	// Hooks for injecting errors in specific calls. Leave nil to disable.
-	CreateRefHook   func(ref string) error
-	DeleteRefHook   func(ref string) error
-	CreateLabelHook func(name string) error
+	CreateRefHook     func(ref string) error
+	DeleteRefHook     func(ref string) error
+	CreateLabelHook   func(name string) error
+	MergePRHook       func(number int) error
+	UpdateBranchHook  func(number int) error
+	CreateCommentHook func(number int) error
 }
 
 func NewFake() *FakeClient {
 	return &FakeClient{
-		User:      "fake-bot",
-		Issues:    map[int]*Issue{},
-		PRs:       map[int]*PullRequest{},
-		Refs:      map[string]string{},
-		Labels:    map[string]struct{}{},
-		Reviews:   map[int][]Review{},
-		BlockedBy: map[int]int{},
-		DefaultBr: "main",
+		User:               "fake-bot",
+		Issues:             map[int]*Issue{},
+		PRs:                map[int]*PullRequest{},
+		Refs:               map[string]string{},
+		Labels:             map[string]struct{}{},
+		Reviews:            map[int][]Review{},
+		BlockedBy:          map[int]int{},
+		Comments:           map[int][]string{},
+		CheckRuns:          map[string][]CheckRun{},
+		UpdateBranchCalled: map[int]bool{},
+		DefaultBr:          "main",
 	}
 }
 
@@ -256,4 +265,54 @@ func (f *FakeClient) CountOpenBlockers(ctx context.Context, r Repo, n int) (int,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.BlockedBy[n], nil
+}
+
+func (f *FakeClient) MergePR(ctx context.Context, r Repo, n int, expectedSha string, method MergeMethod, deleteBranch bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.MergePRHook != nil {
+		if err := f.MergePRHook(n); err != nil {
+			return err
+		}
+	}
+	p, ok := f.PRs[n]
+	if !ok {
+		return fmt.Errorf("fake: PR %d not found", n)
+	}
+	if expectedSha != "" && p.HeadRefOid != expectedSha {
+		return fmt.Errorf("fake: PR %d head SHA mismatch: got %s, expected %s", n, p.HeadRefOid, expectedSha)
+	}
+	p.State = "closed"
+	p.Merged = true
+	return nil
+}
+
+func (f *FakeClient) UpdateBranch(ctx context.Context, r Repo, n int, expectedSha string, method UpdateMethod) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.UpdateBranchHook != nil {
+		if err := f.UpdateBranchHook(n); err != nil {
+			return err
+		}
+	}
+	f.UpdateBranchCalled[n] = true
+	return nil
+}
+
+func (f *FakeClient) GetCheckRuns(ctx context.Context, r Repo, sha string) ([]CheckRun, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]CheckRun(nil), f.CheckRuns[sha]...), nil
+}
+
+func (f *FakeClient) CreateComment(ctx context.Context, r Repo, n int, body string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.CreateCommentHook != nil {
+		if err := f.CreateCommentHook(n); err != nil {
+			return err
+		}
+	}
+	f.Comments[n] = append(f.Comments[n], body)
+	return nil
 }

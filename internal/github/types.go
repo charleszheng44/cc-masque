@@ -21,6 +21,10 @@ type PullRequest struct {
 	BaseRefName      string   `json:"baseRefName"`
 	Mergeable        string   `json:"mergeable"`
 	MergeStateStatus string   `json:"mergeStateStatus"`
+
+	// Merged is populated only by FakeClient.MergePR for tests; real GitHub
+	// responses don't round-trip through this field.
+	Merged bool `json:"-"`
 }
 
 type Ref struct {
