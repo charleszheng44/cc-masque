@@ -78,7 +78,7 @@ func Defaults() Config {
 		ReviewMaxTurns: 0,
 
 		Image: "ghcr.io/charleszheng44/cc-crew:latest",
-		Model: "claude-sonnet-4-6",
+		Model: "claude-opus-4-7",
 	}
 }
 
