@@ -143,6 +143,56 @@ func runUp(args []string) int {
 		schedulers = append(schedulers, addrSched)
 	}
 
+	if c.MaxMergers > 0 {
+		mergerLC := &scheduler.Lifecycle{
+			Kind: claim.KindMerger, Claimer: claimer, GH: ghc, Repo: repo,
+			Log:                  log,
+			QueueLabel:           c.MergeLabel,
+			LockLabel:            c.MergingLabel,
+			ResolveConflictLabel: c.ResolveConflictLabel,
+			ConflictBlockedLabel: c.ConflictBlockedLabel,
+			RoleGHToken:          c.ReviewerGHToken,
+		}
+		mergerS := &scheduler.Scheduler{
+			Kind: claim.KindMerger, Sem: scheduler.NewSemaphore(c.MaxMergers),
+			Claimer: claimer, GH: ghc, Repo: repo, Dispatcher: mergerLC, Log: log,
+			QueueLabel: c.MergeLabel, LockLabel: c.MergingLabel,
+		}
+		schedulers = append(schedulers, mergerS)
+
+		// Resolver: requires implementer to be enabled (shares its semaphore
+		// and uses its image). Otherwise conflicts cannot be resolved.
+		if c.MaxImplementers > 0 {
+			resolverLC := &scheduler.Lifecycle{
+				Kind: claim.KindResolver, Claimer: claimer, GH: ghc, Repo: repo,
+				WT: wt, Docker: dr, Log: log,
+				QueueLabel:           c.ResolveConflictLabel,
+				LockLabel:            c.ResolvingLabel,
+				ReviewLabel:          c.ReviewLabel,
+				DoneLabel:            c.ReviewedLabel,
+				MergeLabel:           c.MergeLabel,
+				ConflictBlockedLabel: c.ConflictBlockedLabel,
+				Image:                c.Image,
+				Model:                c.Model,
+				MaxTurns:             c.ImplMaxTurns,
+				TaskTimeout:          c.ImplTaskTimeout,
+				RoleGHToken:          c.ImplementerGHToken,
+				ClaudeOAuth:          c.ClaudeOAuthToken,
+				AnthropicAPIKey:      c.AnthropicAPIKey,
+				GitName:              c.ImplementerGitName,
+				GitEmail:             c.ImplementerGitEmail,
+			}
+			resolverS := &scheduler.Scheduler{
+				Kind: claim.KindResolver, Sem: schedulers[0].Sem, // share implementer semaphore
+				Claimer: claimer, GH: ghc, Repo: repo, Dispatcher: resolverLC, Log: log,
+				QueueLabel: c.ResolveConflictLabel, LockLabel: c.ResolvingLabel,
+			}
+			schedulers = append(schedulers, resolverS)
+		} else {
+			log.Warn("max-mergers > 0 but max-implementers == 0; resolver disabled (conflicts will be terminal)")
+		}
+	}
+
 	implSweeper := &reclaim.Sweeper{
 		GH: ghc, Repo: repo, Claimer: claimer,
 		Kind:   claim.KindImplementer,
@@ -269,6 +319,18 @@ func runUp(args []string) int {
 			}
 			if err := claimer.Release(shutCtx, claim.KindReviewer, n, true); err != nil {
 				log.Warn("sigint cleanup: release reviewer claim", "pr", n, "err", err)
+			}
+		case "resolver":
+			prStr := e.Labels["cc-crew.pr"]
+			var n int
+			if _, err := fmt.Sscan(prStr, &n); err != nil || n == 0 {
+				continue
+			}
+			if err := ghc.RemoveLabel(shutCtx, repo, n, c.ResolvingLabel); err != nil {
+				log.Warn("sigint cleanup: remove resolving label", "pr", n, "err", err)
+			}
+			if err := claimer.Release(shutCtx, claim.KindResolver, n, true); err != nil {
+				log.Warn("sigint cleanup: release resolver claim", "pr", n, "err", err)
 			}
 		}
 	}
