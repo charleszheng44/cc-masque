@@ -103,6 +103,16 @@ func TestValidateRequiresReviewerTokenWhenMergerEnabled(t *testing.T) {
 	}
 }
 
+func TestDefaultsIncludeQuarantine(t *testing.T) {
+	d := Defaults()
+	if d.QuarantineLabel != "claude-failed" {
+		t.Fatalf("QuarantineLabel = %q, want claude-failed", d.QuarantineLabel)
+	}
+	if d.QuarantineThreshold != 3 {
+		t.Fatalf("QuarantineThreshold = %d, want 3", d.QuarantineThreshold)
+	}
+}
+
 func TestValidateAllowsMergerDisabled(t *testing.T) {
 	c := baseValid()
 	c.MaxMergers = 0

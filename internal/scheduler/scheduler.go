@@ -53,6 +53,17 @@ type Scheduler struct {
 
 	QueueLabel string
 	LockLabel  string
+
+	// QuarantineLabel, when non-empty, is excluded from listCandidates so
+	// items that have failed repeatedly (see Quarantine) stop getting
+	// reclaimed on every tick. A human removes the label to re-enable.
+	QuarantineLabel string
+
+	// Quarantine tracks consecutive dispatch failures. Shared with the
+	// Dispatcher (typically Lifecycle) so the failure/success signal
+	// originates at the dispatch boundary but the "skip candidate" decision
+	// is consulted here.
+	Quarantine *Quarantine
 }
 
 // Tick runs one polling iteration.
@@ -62,6 +73,13 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 		return err
 	}
 	for _, n := range candidates {
+		// A candidate passing the listCandidates filter despite having
+		// been previously quarantined means the human removed the
+		// quarantine label; clear counters so a fresh quarantine window
+		// starts rather than re-firing on the next failure.
+		if s.Quarantine != nil && s.Quarantine.WasLabeled(s.Kind, n) {
+			s.Quarantine.RecordSuccess(s.Kind, n)
+		}
 		if !s.Sem.TryAcquire() {
 			return nil
 		}
@@ -88,9 +106,13 @@ func (s *Scheduler) Tick(ctx context.Context) error {
 }
 
 func (s *Scheduler) listCandidates(ctx context.Context) ([]int, error) {
+	without := []string{s.LockLabel}
+	if s.QuarantineLabel != "" {
+		without = append(without, s.QuarantineLabel)
+	}
 	switch s.Kind {
 	case claim.KindImplementer:
-		issues, err := s.GH.ListIssues(ctx, s.Repo, []string{s.QueueLabel}, []string{s.LockLabel})
+		issues, err := s.GH.ListIssues(ctx, s.Repo, []string{s.QueueLabel}, without)
 		if err != nil {
 			return nil, err
 		}
@@ -109,7 +131,7 @@ func (s *Scheduler) listCandidates(ctx context.Context) ([]int, error) {
 		sortAsc(nums)
 		return nums, nil
 	case claim.KindReviewer, claim.KindAddresser, claim.KindMerger, claim.KindResolver:
-		prs, err := s.GH.ListPRs(ctx, s.Repo, []string{s.QueueLabel}, []string{s.LockLabel})
+		prs, err := s.GH.ListPRs(ctx, s.Repo, []string{s.QueueLabel}, without)
 		if err != nil {
 			return nil, err
 		}

@@ -42,6 +42,8 @@ func Parse(flags []string, getenv func(string) string, pwd string) (Config, erro
 	fs.IntVar(&c.ReviewMaxTurns, "review-max-turns", envInt(getenv, "CC_REVIEW_MAX_TURNS", c.ReviewMaxTurns), "Max Claude turns per reviewer task")
 	fs.StringVar(&c.Image, "image", orDefault(getenv("CC_IMAGE"), c.Image), "Task container image")
 	fs.StringVar(&c.Model, "model", orDefault(getenv("CC_MODEL"), c.Model), "Claude model")
+	fs.StringVar(&c.QuarantineLabel, "quarantine-label", orDefault(getenv("CC_QUARANTINE_LABEL"), c.QuarantineLabel), "Label applied to quarantine repeatedly-failing issues/PRs")
+	fs.IntVar(&c.QuarantineThreshold, "quarantine-threshold", envInt(getenv, "CC_QUARANTINE_THRESHOLD", c.QuarantineThreshold), "Consecutive dispatch failures before quarantine (0 disables)")
 
 	if err := fs.Parse(flags); err != nil {
 		return c, fmt.Errorf("flag parse: %w\n%s", err, buf.String())

@@ -69,6 +69,8 @@ type Options struct {
 	ResolveConflictLabel string
 	ResolvingLabel       string
 	ConflictBlockedLabel string
+
+	QuarantineLabel string
 }
 
 // Compute builds a Plan without making any changes.
@@ -96,7 +98,7 @@ func Compute(ctx context.Context, o Options) (Plan, error) {
 	// Also pick up issues/PRs whose cc-crew labels (processing or done) were
 	// left behind without a corresponding ref — partial cleanup, manual ref
 	// deletion, etc. Without this reset can't clean the orphaned label.
-	for _, label := range []string{o.ProcessingLabel, o.DoneLabel} {
+	for _, label := range []string{o.ProcessingLabel, o.DoneLabel, o.QuarantineLabel} {
 		if label == "" {
 			continue
 		}
@@ -114,6 +116,7 @@ func Compute(ctx context.Context, o Options) (Plan, error) {
 		o.ReviewingLabel, o.ReviewedLabel,
 		o.AddressingLabel, o.AddressedLabel,
 		o.MergingLabel, o.ResolvingLabel, o.ConflictBlockedLabel,
+		o.QuarantineLabel,
 	} {
 		if label == "" {
 			continue
@@ -180,6 +183,9 @@ func Execute(ctx context.Context, o Options, p Plan, out io.Writer) error {
 		if o.DoneLabel != "" {
 			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.DoneLabel)
 		}
+		if o.QuarantineLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.QuarantineLabel)
+		}
 		_ = o.GH.AddLabel(ctx, o.Repo, n, o.TaskLabel)
 	}
 	prs, err := o.GH.ListPRs(ctx, o.Repo, nil, nil)
@@ -218,6 +224,9 @@ func Execute(ctx context.Context, o Options, p Plan, out io.Writer) error {
 		}
 		if o.ResolveConflictLabel != "" {
 			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.ResolveConflictLabel)
+		}
+		if o.QuarantineLabel != "" {
+			_ = o.GH.RemoveLabel(ctx, o.Repo, n, o.QuarantineLabel)
 		}
 		_ = o.GH.AddLabel(ctx, o.Repo, n, o.ReviewLabel)
 	}

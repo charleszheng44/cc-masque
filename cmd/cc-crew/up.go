@@ -68,6 +68,7 @@ func runUp(args []string) int {
 	wt := worktree.New(c.RepoDir)
 	dr := docker.New()
 	claimer := claim.New(ghc, repo)
+	quarantine := scheduler.NewQuarantine(c.QuarantineThreshold)
 
 	var schedulers []*scheduler.Scheduler
 
@@ -75,16 +76,18 @@ func runUp(args []string) int {
 		lc := &scheduler.Lifecycle{
 			Kind: claim.KindImplementer, Claimer: claimer, GH: ghc, Repo: repo,
 			WT: wt, Docker: dr, Log: log,
-			QueueLabel:  c.TaskLabel,
-			LockLabel:   c.ProcessingLabel,
-			DoneLabel:   c.DoneLabel,
-			ReviewLabel: c.ReviewLabel,
-			Image:       c.Image,
-			Model:       c.Model,
-			MaxTurns:    c.ImplMaxTurns,
-			TaskTimeout: c.ImplTaskTimeout,
-			AutoReview:  c.AutoReview,
-			RoleGHToken: c.ImplementerGHToken, ClaudeOAuth: c.ClaudeOAuthToken, AnthropicAPIKey: c.AnthropicAPIKey,
+			QueueLabel:      c.TaskLabel,
+			LockLabel:       c.ProcessingLabel,
+			DoneLabel:       c.DoneLabel,
+			ReviewLabel:     c.ReviewLabel,
+			QuarantineLabel: c.QuarantineLabel,
+			Quarantine:      quarantine,
+			Image:           c.Image,
+			Model:           c.Model,
+			MaxTurns:        c.ImplMaxTurns,
+			TaskTimeout:     c.ImplTaskTimeout,
+			AutoReview:      c.AutoReview,
+			RoleGHToken:     c.ImplementerGHToken, ClaudeOAuth: c.ClaudeOAuthToken, AnthropicAPIKey: c.AnthropicAPIKey,
 			GitName: c.ImplementerGitName, GitEmail: c.ImplementerGitEmail,
 			BaseBranch: c.BaseBranch,
 		}
@@ -92,6 +95,7 @@ func runUp(args []string) int {
 			Kind: claim.KindImplementer, Sem: scheduler.NewSemaphore(c.MaxImplementers),
 			Claimer: claimer, GH: ghc, Repo: repo, Dispatcher: lc, Log: log,
 			QueueLabel: c.TaskLabel, LockLabel: c.ProcessingLabel,
+			QuarantineLabel: c.QuarantineLabel, Quarantine: quarantine,
 		}
 		schedulers = append(schedulers, s)
 	}
@@ -100,14 +104,16 @@ func runUp(args []string) int {
 		lc := &scheduler.Lifecycle{
 			Kind: claim.KindReviewer, Claimer: claimer, GH: ghc, Repo: repo,
 			WT: wt, Docker: dr, Log: log,
-			QueueLabel:  c.ReviewLabel,
-			LockLabel:   c.ReviewingLabel,
-			DoneLabel:   c.ReviewedLabel,
-			Image:       c.Image,
-			Model:       c.Model,
-			MaxTurns:    c.ReviewMaxTurns,
-			TaskTimeout: c.ReviewTaskTimeout,
-			RoleGHToken: c.ReviewerGHToken, ClaudeOAuth: c.ClaudeOAuthToken, AnthropicAPIKey: c.AnthropicAPIKey,
+			QueueLabel:      c.ReviewLabel,
+			LockLabel:       c.ReviewingLabel,
+			DoneLabel:       c.ReviewedLabel,
+			QuarantineLabel: c.QuarantineLabel,
+			Quarantine:      quarantine,
+			Image:           c.Image,
+			Model:           c.Model,
+			MaxTurns:        c.ReviewMaxTurns,
+			TaskTimeout:     c.ReviewTaskTimeout,
+			RoleGHToken:     c.ReviewerGHToken, ClaudeOAuth: c.ClaudeOAuthToken, AnthropicAPIKey: c.AnthropicAPIKey,
 			GitName: c.ReviewerGitName, GitEmail: c.ReviewerGitEmail,
 			MergeLabel:   c.MergeLabel,
 			AddressLabel: c.AddressLabel,
@@ -116,6 +122,7 @@ func runUp(args []string) int {
 			Kind: claim.KindReviewer, Sem: scheduler.NewSemaphore(c.MaxReviewers),
 			Claimer: claimer, GH: ghc, Repo: repo, Dispatcher: lc, Log: log,
 			QueueLabel: c.ReviewLabel, LockLabel: c.ReviewingLabel,
+			QuarantineLabel: c.QuarantineLabel, Quarantine: quarantine,
 		}
 		schedulers = append(schedulers, s)
 	}
@@ -124,14 +131,16 @@ func runUp(args []string) int {
 		addr := &scheduler.Lifecycle{
 			Kind: claim.KindAddresser, Claimer: claimer, GH: ghc, Repo: repo,
 			WT: wt, Docker: dr, Log: log,
-			QueueLabel:  c.AddressLabel,
-			LockLabel:   c.AddressingLabel,
-			DoneLabel:   c.AddressedLabel,
-			Image:       c.Image,
-			Model:       c.Model,
-			MaxTurns:    c.ImplMaxTurns,
-			TaskTimeout: c.ImplTaskTimeout,
-			RoleGHToken: c.ImplementerGHToken, ClaudeOAuth: c.ClaudeOAuthToken, AnthropicAPIKey: c.AnthropicAPIKey,
+			QueueLabel:      c.AddressLabel,
+			LockLabel:       c.AddressingLabel,
+			DoneLabel:       c.AddressedLabel,
+			QuarantineLabel: c.QuarantineLabel,
+			Quarantine:      quarantine,
+			Image:           c.Image,
+			Model:           c.Model,
+			MaxTurns:        c.ImplMaxTurns,
+			TaskTimeout:     c.ImplTaskTimeout,
+			RoleGHToken:     c.ImplementerGHToken, ClaudeOAuth: c.ClaudeOAuthToken, AnthropicAPIKey: c.AnthropicAPIKey,
 			GitName: c.ImplementerGitName, GitEmail: c.ImplementerGitEmail,
 			BaseBranch: c.BaseBranch,
 		}
@@ -139,6 +148,7 @@ func runUp(args []string) int {
 			Kind: claim.KindAddresser, Sem: schedulers[0].Sem, // REUSE implementer semaphore
 			Claimer: claimer, GH: ghc, Repo: repo, Dispatcher: addr, Log: log,
 			QueueLabel: c.AddressLabel, LockLabel: c.AddressingLabel,
+			QuarantineLabel: c.QuarantineLabel, Quarantine: quarantine,
 		}
 		schedulers = append(schedulers, addrSched)
 	}
@@ -172,6 +182,8 @@ func runUp(args []string) int {
 				DoneLabel:            c.ReviewedLabel,
 				MergeLabel:           c.MergeLabel,
 				ConflictBlockedLabel: c.ConflictBlockedLabel,
+				QuarantineLabel:      c.QuarantineLabel,
+				Quarantine:           quarantine,
 				Image:                c.Image,
 				Model:                c.Model,
 				MaxTurns:             c.ImplMaxTurns,
@@ -186,6 +198,7 @@ func runUp(args []string) int {
 				Kind: claim.KindResolver, Sem: schedulers[0].Sem, // share implementer semaphore
 				Claimer: claimer, GH: ghc, Repo: repo, Dispatcher: resolverLC, Log: log,
 				QueueLabel: c.ResolveConflictLabel, LockLabel: c.ResolvingLabel,
+				QuarantineLabel: c.QuarantineLabel, Quarantine: quarantine,
 			}
 			schedulers = append(schedulers, resolverS)
 		} else {

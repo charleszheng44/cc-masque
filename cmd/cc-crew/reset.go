@@ -95,6 +95,8 @@ func runReset(args []string) int {
 		ResolveConflictLabel: firstNonEmpty(os.Getenv("CC_RESOLVE_CONFLICT_LABEL"), defaults.ResolveConflictLabel),
 		ResolvingLabel:       firstNonEmpty(os.Getenv("CC_RESOLVING_LABEL"), defaults.ResolvingLabel),
 		ConflictBlockedLabel: firstNonEmpty(os.Getenv("CC_CONFLICT_BLOCKED_LABEL"), defaults.ConflictBlockedLabel),
+
+		QuarantineLabel: firstNonEmpty(os.Getenv("CC_QUARANTINE_LABEL"), defaults.QuarantineLabel),
 	}
 	plan, err := reset.Compute(ctx, o)
 	if err != nil {
