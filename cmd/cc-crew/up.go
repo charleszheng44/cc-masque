@@ -109,6 +109,8 @@ func runUp(args []string) int {
 			TaskTimeout: c.ReviewTaskTimeout,
 			RoleGHToken: c.ReviewerGHToken, ClaudeOAuth: c.ClaudeOAuthToken, AnthropicAPIKey: c.AnthropicAPIKey,
 			GitName: c.ReviewerGitName, GitEmail: c.ReviewerGitEmail,
+			MergeLabel:   c.MergeLabel,
+			AddressLabel: c.AddressLabel,
 		}
 		s := &scheduler.Scheduler{
 			Kind: claim.KindReviewer, Sem: scheduler.NewSemaphore(c.MaxReviewers),

@@ -32,6 +32,10 @@ type Lifecycle struct {
 	DoneLabel   string
 	ReviewLabel string
 
+	// Merger/resolver-aware reviewer fields. Only read when Kind == KindReviewer.
+	MergeLabel   string
+	AddressLabel string
+
 	Image       string
 	Model       string
 	MaxTurns    int
@@ -387,10 +391,56 @@ func (l *Lifecycle) successCleanupReviewer(ctx context.Context, number int, head
 		ref := fmt.Sprintf("refs/cc-crew/rereviewed/pr-%d/%s", number, headSha)
 		_ = l.createRefWithRetry(ctx, ref, headSha)
 	}
+
+	verdict := l.latestReviewVerdict(ctx, number)
+
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.LockLabel)
 	_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.QueueLabel)
 	_ = l.GH.AddLabel(ctx, l.Repo, number, l.DoneLabel)
+
+	switch verdict {
+	case "APPROVED":
+		if l.MergeLabel != "" {
+			_ = l.GH.AddLabel(ctx, l.Repo, number, l.MergeLabel)
+		}
+		if l.AddressLabel != "" {
+			_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.AddressLabel)
+		}
+	case "CHANGES_REQUESTED":
+		if l.AddressLabel != "" {
+			_ = l.GH.AddLabel(ctx, l.Repo, number, l.AddressLabel)
+		}
+		if l.MergeLabel != "" {
+			_ = l.GH.RemoveLabel(ctx, l.Repo, number, l.MergeLabel)
+		}
+	}
+
 	_ = l.releaseWithRetry(ctx, l.Kind, number, true)
+}
+
+// latestReviewVerdict returns the state of the most recent non-COMMENTED
+// review on the PR ("APPROVED" | "CHANGES_REQUESTED" | ""). Returns "" on
+// any error or when only COMMENTED reviews exist.
+func (l *Lifecycle) latestReviewVerdict(ctx context.Context, prNumber int) string {
+	reviews, err := l.GH.ListReviews(ctx, l.Repo, prNumber)
+	if err != nil {
+		l.Log.Warn("list reviews for verdict failed", "pr", prNumber, "err", err)
+		return ""
+	}
+	var latest *github.Review
+	for i := range reviews {
+		r := &reviews[i]
+		if r.State != "APPROVED" && r.State != "CHANGES_REQUESTED" {
+			continue
+		}
+		if latest == nil || r.At.After(latest.At) {
+			latest = r
+		}
+	}
+	if latest == nil {
+		return ""
+	}
+	return latest.State
 }
 
 func (l *Lifecycle) successCleanupAddresser(ctx context.Context, prNumber int, reviewIDs []int) {
