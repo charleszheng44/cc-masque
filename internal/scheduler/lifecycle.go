@@ -27,13 +27,14 @@ type Lifecycle struct {
 	Docker  *docker.Runner
 	Log     *slog.Logger
 
-	QueueLabel  string
-	LockLabel   string
-	DoneLabel   string
-	ReviewLabel string
+	QueueLabel           string
+	LockLabel            string
+	DoneLabel            string
+	ReviewLabel          string
+	MergeLabel           string
+	ConflictBlockedLabel string
 
-	// Merger/resolver-aware reviewer fields. Only read when Kind == KindReviewer.
-	MergeLabel   string
+	// Merger/resolver-aware reviewer field. Only read when Kind == KindReviewer.
 	AddressLabel string
 
 	Image       string
@@ -50,9 +51,13 @@ type Lifecycle struct {
 
 	BaseBranch string
 
-	// Merger-only fields. Consumed when Kind == KindMerger.
+	// Merger-only field. Consumed when Kind == KindMerger.
 	ResolveConflictLabel string // queue label for the resolver, set by merger on DIRTY
-	ConflictBlockedLabel string // terminal-failure label
+
+	// Test-only seam. When nil, the resolver calls l.Docker.Run via the
+	// real docker.Runner; tests can substitute a stub that returns a
+	// predetermined (code, err) without spinning a container.
+	dockerRunFn func() (int, error)
 }
 
 // Dispatch implements scheduler.Dispatcher.
@@ -69,6 +74,8 @@ func (l *Lifecycle) Dispatch(ctx context.Context, number int) {
 		l.dispatchAddresser(ctx, log, number)
 	case claim.KindMerger:
 		l.dispatchMerger(ctx, log, number)
+	case claim.KindResolver:
+		l.dispatchResolver(ctx, log, number)
 	}
 }
 
