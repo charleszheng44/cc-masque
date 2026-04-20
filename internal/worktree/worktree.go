@@ -4,8 +4,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // Manager wraps `git worktree` operations against a specific repo dir.
@@ -36,6 +38,26 @@ func (m *Manager) Path(branch string) string {
 	return filepath.Join(m.RepoDir, ".claude-worktrees", filepath.Base(branch))
 }
 
+// cleanWorktreePath removes a worktree directory at p cleanly. It attempts
+// git worktree remove --force, prunes stale admin entries, then calls
+// os.RemoveAll so the path is gone regardless of whether git knew about it.
+// A missing directory is not an error. Returns an error if p is not strictly
+// inside <RepoDir>/.claude-worktrees/ (defensive guard; never rm elsewhere).
+func (m *Manager) cleanWorktreePath(ctx context.Context, p string) error {
+	base := filepath.Clean(filepath.Join(m.RepoDir, ".claude-worktrees"))
+	cleanP := filepath.Clean(p)
+	rel, err := filepath.Rel(base, cleanP)
+	if err != nil || rel == "." || strings.HasPrefix(rel, "..") {
+		return fmt.Errorf("cleanWorktreePath: %q is outside allowed tree %q", p, base)
+	}
+	_, _ = m.git(ctx, "worktree", "remove", "--force", p)
+	_, _ = m.git(ctx, "worktree", "prune")
+	if err := os.RemoveAll(p); err != nil {
+		return fmt.Errorf("cleanWorktreePath: %w", err)
+	}
+	return nil
+}
+
 // Add fetches origin/branch, force-syncs the local branch ref to match
 // origin, and creates a worktree at Path(branch). Removing the worktree
 // first (if any) releases any git lock on the local branch so the forced
@@ -49,9 +71,11 @@ func (m *Manager) Path(branch string) string {
 // and any new commits would layer on top of the stale history when pushed.
 func (m *Manager) Add(ctx context.Context, branch string) (string, error) {
 	p := m.Path(branch)
-	// Release the local branch (if it's checked out in a stale worktree)
-	// before force-updating its ref.
-	_, _ = m.git(ctx, "worktree", "remove", "--force", p)
+	// Release the local branch (if checked out in a stale worktree) and
+	// remove any pre-existing directory before force-updating its ref.
+	if err := m.cleanWorktreePath(ctx, p); err != nil {
+		return "", err
+	}
 	// Force-sync the local branch to origin's current tip. The leading `+`
 	// in the refspec forces the update even when it isn't fast-forward.
 	refspec := fmt.Sprintf("+refs/heads/%s:refs/heads/%s", branch, branch)
@@ -76,7 +100,9 @@ func (m *Manager) AddDetached(ctx context.Context, name, sha string) (string, er
 			return "", fmt.Errorf("fetch origin: %w", ferr)
 		}
 	}
-	_, _ = m.git(ctx, "worktree", "remove", "--force", p)
+	if err := m.cleanWorktreePath(ctx, p); err != nil {
+		return "", err
+	}
 	if _, err := m.git(ctx, "worktree", "add", "--force", "--detach", p, sha); err != nil {
 		return "", err
 	}

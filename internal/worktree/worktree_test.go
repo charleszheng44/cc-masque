@@ -137,6 +137,78 @@ func TestAddForceSyncsLocalBranchToOrigin(t *testing.T) {
 	}
 }
 
+// TestAddStaleDirectory verifies that Add succeeds when a plain directory
+// already exists at the worktree path but git has no record of it.
+func TestAddStaleDirectory(t *testing.T) {
+	clone := makeRepo(t)
+	m := New(clone)
+	ctx := context.Background()
+
+	p := m.Path("claude/issue-42")
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	got, err := m.Add(ctx, "claude/issue-42")
+	if err != nil {
+		t.Fatalf("Add with stale directory: %v", err)
+	}
+	if got != p {
+		t.Fatalf("returned path = %q, want %q", got, p)
+	}
+	headCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
+	headCmd.Dir = p
+	out, err := headCmd.Output()
+	if err != nil {
+		t.Fatalf("rev-parse HEAD: %v", err)
+	}
+	if branch := strings.TrimSpace(string(out)); branch != "claude/issue-42" {
+		t.Fatalf("HEAD branch = %q, want claude/issue-42", branch)
+	}
+}
+
+// TestAddStaleRegisteredWorktree verifies that Add succeeds when git has a
+// registered worktree entry for the path but the directory was deleted.
+func TestAddStaleRegisteredWorktree(t *testing.T) {
+	clone := makeRepo(t)
+	m := New(clone)
+	ctx := context.Background()
+
+	p, err := m.Add(ctx, "claude/issue-42")
+	if err != nil {
+		t.Fatalf("first Add: %v", err)
+	}
+	// Delete the directory but leave the git worktree admin entry stale.
+	if err := os.RemoveAll(p); err != nil {
+		t.Fatalf("RemoveAll: %v", err)
+	}
+
+	if _, err := m.Add(ctx, "claude/issue-42"); err != nil {
+		t.Fatalf("Add with stale registered worktree: %v", err)
+	}
+	if _, err := os.Stat(p); err != nil {
+		t.Fatalf("worktree path missing after Add: %v", err)
+	}
+}
+
+// TestCleanWorktreePathGuard verifies that cleanWorktreePath refuses to
+// operate on any path outside <RepoDir>/.claude-worktrees/.
+func TestCleanWorktreePathGuard(t *testing.T) {
+	clone := makeRepo(t)
+	m := New(clone)
+	ctx := context.Background()
+
+	outside := filepath.Join(clone, "not-worktrees", "escape")
+	if err := m.cleanWorktreePath(ctx, outside); err == nil {
+		t.Fatal("expected error for path outside allowed tree, got nil")
+	}
+	// Also guard against traversal attempts.
+	traversal := filepath.Join(m.RepoDir, ".claude-worktrees", "..", "escape")
+	if err := m.cleanWorktreePath(ctx, traversal); err == nil {
+		t.Fatal("expected error for traversal path, got nil")
+	}
+}
+
 func TestAddRemove(t *testing.T) {
 	clone := makeRepo(t)
 	m := New(clone)
