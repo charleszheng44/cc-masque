@@ -4,6 +4,28 @@ import (
 	"bytes"
 	"io"
 	"os"
+	"sync"
+)
+
+// lockedWriter serializes concurrent writes to an underlying io.Writer so that
+// prefix+line pairs emitted by PrefixedWriter are never interleaved across
+// goroutines sharing the same destination.
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (lw *lockedWriter) Write(p []byte) (int, error) {
+	lw.mu.Lock()
+	defer lw.mu.Unlock()
+	return lw.w.Write(p)
+}
+
+// lockedStdout and lockedStderr are shared by all PrefixedWriter instances in
+// a process so that concurrent containers cannot interleave their output.
+var (
+	lockedStdout = &lockedWriter{w: os.Stdout}
+	lockedStderr = &lockedWriter{w: os.Stderr}
 )
 
 var ansiColors = []string{
@@ -48,15 +70,14 @@ func (p *PrefixedWriter) Write(data []byte) (int, error) {
 			p.buf = append(p.buf, data...)
 			break
 		}
-		// Assemble and emit one complete line: buffered prefix + this chunk.
-		line := make([]byte, 0, len(p.buf)+idx+1)
-		line = append(line, p.buf...)
-		line = append(line, data[:idx+1]...)
+		// Combine prefix + buffered bytes + current chunk into one write so
+		// that the lockedWriter's mutex covers both atomically.
+		combined := make([]byte, 0, len(p.prefix)+len(p.buf)+idx+1)
+		combined = append(combined, p.prefix...)
+		combined = append(combined, p.buf...)
+		combined = append(combined, data[:idx+1]...)
 		p.buf = p.buf[:0]
-		if _, err := io.WriteString(p.w, p.prefix); err != nil {
-			return 0, err
-		}
-		if _, err := p.w.Write(line); err != nil {
+		if _, err := p.w.Write(combined); err != nil {
 			return 0, err
 		}
 		data = data[idx+1:]
@@ -67,13 +88,13 @@ func (p *PrefixedWriter) Write(data []byte) (int, error) {
 // Close flushes any partial line still held in the buffer.
 func (p *PrefixedWriter) Close() error {
 	if len(p.buf) > 0 {
-		if _, err := io.WriteString(p.w, p.prefix); err != nil {
-			return err
-		}
-		if _, err := p.w.Write(p.buf); err != nil {
-			return err
-		}
+		combined := make([]byte, 0, len(p.prefix)+len(p.buf))
+		combined = append(combined, p.prefix...)
+		combined = append(combined, p.buf...)
 		p.buf = p.buf[:0]
+		if _, err := p.w.Write(combined); err != nil {
+			return err
+		}
 	}
 	return nil
 }

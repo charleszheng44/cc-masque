@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -256,8 +255,8 @@ func (l *Lifecycle) buildRunSpec(number int, wtPath string) docker.RunSpec {
 		Name:   name,
 		Labels: labels,
 		Env:    env,
-		Stdout: NewPrefixedWriter(os.Stdout, prefix, number),
-		Stderr: NewPrefixedWriter(os.Stderr, prefix, number),
+		Stdout: NewPrefixedWriter(lockedStdout, prefix, number),
+		Stderr: NewPrefixedWriter(lockedStderr, prefix, number),
 		Mounts: []docker.Mount{
 			{HostPath: wtPath, ContainerPath: "/workspace"},
 			{
@@ -344,8 +343,8 @@ func (l *Lifecycle) buildAddresserRunSpec(prNumber, issueNum int, reviewIDs []in
 		Name:   name,
 		Labels: labels,
 		Env:    env,
-		Stdout: NewPrefixedWriter(os.Stdout, prPrefix, prNumber),
-		Stderr: NewPrefixedWriter(os.Stderr, prPrefix, prNumber),
+		Stdout: NewPrefixedWriter(lockedStdout, prPrefix, prNumber),
+		Stderr: NewPrefixedWriter(lockedStderr, prPrefix, prNumber),
 		Mounts: []docker.Mount{
 			{HostPath: wtPath, ContainerPath: "/workspace"},
 			{
