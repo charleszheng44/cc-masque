@@ -140,3 +140,140 @@ func TestFakeCreateLabelHookCanInjectError(t *testing.T) {
 		t.Fatalf("want sentinel, got %v", err)
 	}
 }
+
+func TestFakeMergePR(t *testing.T) {
+	f := NewFake()
+	r := Repo{Owner: "o", Name: "n"}
+	f.PRs[1] = &PullRequest{Number: 1, State: "open", HeadRefOid: "sha"}
+	if err := f.MergePR(context.Background(), r, 1, "sha", MergeMethodRebase, true); err != nil {
+		t.Fatalf("MergePR: %v", err)
+	}
+	if f.PRs[1].State != "closed" {
+		t.Errorf("state = %q, want closed", f.PRs[1].State)
+	}
+	if !f.PRs[1].Merged {
+		t.Error("Merged flag not set")
+	}
+}
+
+func TestFakeMergePRConflictHook(t *testing.T) {
+	f := NewFake()
+	r := Repo{Owner: "o", Name: "n"}
+	f.PRs[2] = &PullRequest{Number: 2, State: "open", HeadRefOid: "sha", MergeStateStatus: "DIRTY"}
+	f.MergePRHook = func(n int) error { return ErrMergeConflict }
+	err := f.MergePR(context.Background(), r, 2, "sha", MergeMethodRebase, true)
+	if !errors.Is(err, ErrMergeConflict) {
+		t.Fatalf("want ErrMergeConflict, got %v", err)
+	}
+	if f.PRs[2].Merged {
+		t.Error("PR should not be marked merged when hook rejects")
+	}
+}
+
+func TestFakeMergePRRejectsShaMismatch(t *testing.T) {
+	f := NewFake()
+	r := Repo{Owner: "o", Name: "n"}
+	f.PRs[10] = &PullRequest{Number: 10, State: "open", HeadRefOid: "newsha"}
+	err := f.MergePR(context.Background(), r, 10, "oldsha", MergeMethodRebase, true)
+	if err == nil {
+		t.Fatal("expected SHA-mismatch error, got nil")
+	}
+	if f.PRs[10].Merged {
+		t.Error("PR should not be merged when SHA mismatches")
+	}
+}
+
+func TestFakeUpdateBranch(t *testing.T) {
+	f := NewFake()
+	r := Repo{Owner: "o", Name: "n"}
+	f.PRs[3] = &PullRequest{Number: 3, State: "open", HeadRefOid: "old"}
+	if err := f.UpdateBranch(context.Background(), r, 3, "old", UpdateMethodRebase); err != nil {
+		t.Fatalf("UpdateBranch: %v", err)
+	}
+	if !f.UpdateBranchCalled[3] {
+		t.Error("UpdateBranchCalled not recorded")
+	}
+}
+
+func TestFakeUpdateBranchHookError(t *testing.T) {
+	f := NewFake()
+	sentinel := errors.New("boom")
+	f.UpdateBranchHook = func(int) error { return sentinel }
+	err := f.UpdateBranch(context.Background(), Repo{Owner: "o", Name: "n"}, 99, "sha", UpdateMethodRebase)
+	if err != sentinel {
+		t.Fatalf("want sentinel, got %v", err)
+	}
+	if f.UpdateBranchCalled[99] {
+		t.Error("UpdateBranchCalled should stay false when hook errors")
+	}
+}
+
+func TestFakeCreateComment(t *testing.T) {
+	f := NewFake()
+	r := Repo{Owner: "o", Name: "n"}
+	f.PRs[4] = &PullRequest{Number: 4, State: "open"}
+	if err := f.CreateComment(context.Background(), r, 4, "hello"); err != nil {
+		t.Fatalf("CreateComment: %v", err)
+	}
+	if got := f.Comments[4]; len(got) != 1 || got[0] != "hello" {
+		t.Errorf("Comments[4] = %v, want [hello]", got)
+	}
+}
+
+func TestFakeCreateCommentAppends(t *testing.T) {
+	f := NewFake()
+	r := Repo{Owner: "o", Name: "n"}
+	if err := f.CreateComment(context.Background(), r, 5, "first"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.CreateComment(context.Background(), r, 5, "second"); err != nil {
+		t.Fatal(err)
+	}
+	got := f.Comments[5]
+	if len(got) != 2 || got[0] != "first" || got[1] != "second" {
+		t.Errorf("Comments[5] = %v, want [first second]", got)
+	}
+}
+
+func TestFakeCreateCommentHookError(t *testing.T) {
+	f := NewFake()
+	sentinel := errors.New("nope")
+	f.CreateCommentHook = func(int) error { return sentinel }
+	err := f.CreateComment(context.Background(), Repo{Owner: "o", Name: "n"}, 6, "x")
+	if err != sentinel {
+		t.Fatalf("want sentinel, got %v", err)
+	}
+	if len(f.Comments[6]) != 0 {
+		t.Error("no comment should be recorded when hook errors")
+	}
+}
+
+func TestFakeGetCheckRuns(t *testing.T) {
+	f := NewFake()
+	r := Repo{Owner: "o", Name: "n"}
+	f.CheckRuns["sha"] = []CheckRun{
+		{Name: "build", Status: "completed", Conclusion: "success"},
+		{Name: "lint", Status: "in_progress", Conclusion: ""},
+	}
+	got, err := f.GetCheckRuns(context.Background(), r, "sha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d runs, want 2", len(got))
+	}
+	if got[0].Name != "build" || got[0].Conclusion != "success" {
+		t.Errorf("runs[0] = %+v", got[0])
+	}
+}
+
+func TestFakeGetCheckRunsEmpty(t *testing.T) {
+	f := NewFake()
+	got, err := f.GetCheckRuns(context.Background(), Repo{Owner: "o", Name: "n"}, "unknown")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("want empty, got %+v", got)
+	}
+}
