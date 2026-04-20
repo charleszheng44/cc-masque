@@ -3,12 +3,11 @@ package github
 import "time"
 
 type Issue struct {
-	Number        int      `json:"number"`
-	Title         string   `json:"title"`
-	Body          string   `json:"body"`
-	State         string   `json:"state"`
-	Labels        []string `json:"labels"`
-	BlockedByOpen int      // count of still-open blockers (populated by scheduler)
+	Number int      `json:"number"`
+	Title  string   `json:"title"`
+	Body   string   `json:"body"`
+	State  string   `json:"state"`
+	Labels []string `json:"labels"`
 }
 
 type PullRequest struct {
