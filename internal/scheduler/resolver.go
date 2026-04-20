@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 
 	"github.com/charleszheng44/cc-crew/internal/claim"
@@ -54,8 +55,14 @@ func (l *Lifecycle) dispatchResolver(ctx context.Context, log *slog.Logger, numb
 		return
 	}
 	defer func() { _ = l.WT.Remove(ctx, fmt.Sprintf("resolve-%d", number)) }()
+	homePath, err := prepareContainerHome(wtPath)
+	if err != nil {
+		log.Error("prepare container home failed", "err", err)
+		l.failCleanup(ctx, number)
+		return
+	}
 
-	spec := l.buildResolverRunSpec(number, pr.BaseRefName, pr.HeadRefName, wtPath)
+	spec := l.buildResolverRunSpec(number, pr.BaseRefName, pr.HeadRefName, wtPath, homePath)
 	runCtx, cancel := context.WithTimeout(ctx, l.TaskTimeout)
 	defer cancel()
 
@@ -68,7 +75,7 @@ func (l *Lifecycle) dispatchResolver(ctx context.Context, log *slog.Logger, numb
 	l.resolverSuccessCleanup(ctx, log, number)
 }
 
-func (l *Lifecycle) buildResolverRunSpec(prNumber int, baseBranch, headBranch, wtPath string) docker.RunSpec {
+func (l *Lifecycle) buildResolverRunSpec(prNumber int, baseBranch, headBranch, wtPath, homePath string) docker.RunSpec {
 	name := fmt.Sprintf("cc-crew-resolve-%s-%s-%d",
 		safeName(l.Repo.Owner), safeName(l.Repo.Name), prNumber)
 	labels := map[string]string{
@@ -91,14 +98,18 @@ func (l *Lifecycle) buildResolverRunSpec(prNumber int, baseBranch, headBranch, w
 		"GIT_COMMITTER_NAME":      l.GitName,
 		"GIT_COMMITTER_EMAIL":     l.GitEmail,
 		"IS_SANDBOX":              "1",
+		"HOME":                    containerHomePath,
 	}
 	if l.MaxTurns > 0 {
 		env["CC_MAX_TURNS"] = fmt.Sprint(l.MaxTurns)
 	}
 	prefix := fmt.Sprintf("[pr-%d] ", prNumber)
+	uid, gid := os.Getuid(), os.Getgid()
 	return docker.RunSpec{
 		Image:  l.Image,
 		Name:   name,
+		UID:    &uid,
+		GID:    &gid,
 		Labels: labels,
 		Env:    env,
 		Stdout: NewPrefixedWriter(lockedStdout, prefix, prNumber),
@@ -109,6 +120,7 @@ func (l *Lifecycle) buildResolverRunSpec(prNumber int, baseBranch, headBranch, w
 				HostPath:      filepath.Join(l.WT.RepoDir, ".git"),
 				ContainerPath: filepath.Join(l.WT.RepoDir, ".git"),
 			},
+			{HostPath: homePath, ContainerPath: containerHomePath},
 		},
 	}
 }

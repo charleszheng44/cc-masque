@@ -173,7 +173,7 @@ func TestBuildResolverRunSpec(t *testing.T) {
 		GitEmail:        "cc-crew@example.com",
 	}
 
-	spec := lc.buildResolverRunSpec(7, "main", "claude/issue-7", "/tmp/wt")
+	spec := lc.buildResolverRunSpec(7, "main", "claude/issue-7", "/tmp/wt", "/tmp/wt/.cc-home")
 
 	wantName := "cc-crew-resolve-My-Org-co-ol-repo-7"
 	if spec.Name != wantName {
@@ -181,6 +181,18 @@ func TestBuildResolverRunSpec(t *testing.T) {
 	}
 	if spec.Image != "cc-crew-impl:latest" {
 		t.Errorf("image = %q", spec.Image)
+	}
+
+	// --user must be host uid/gid so .git/objects writes are host-owned (issue #41).
+	wantUID, wantGID := os.Getuid(), os.Getgid()
+	if spec.UID == nil || *spec.UID != wantUID {
+		t.Errorf("UID = %v, want %d", spec.UID, wantUID)
+	}
+	if spec.GID == nil || *spec.GID != wantGID {
+		t.Errorf("GID = %v, want %d", spec.GID, wantGID)
+	}
+	if spec.Env["HOME"] != "/home/claude" {
+		t.Errorf("HOME = %q, want /home/claude", spec.Env["HOME"])
 	}
 
 	wantLabels := map[string]string{
@@ -217,8 +229,8 @@ func TestBuildResolverRunSpec(t *testing.T) {
 		}
 	}
 
-	if len(spec.Mounts) != 2 {
-		t.Fatalf("mounts = %d, want 2", len(spec.Mounts))
+	if len(spec.Mounts) != 3 {
+		t.Fatalf("mounts = %d, want 3", len(spec.Mounts))
 	}
 	if spec.Mounts[0].HostPath != "/tmp/wt" || spec.Mounts[0].ContainerPath != "/workspace" {
 		t.Errorf("workspace mount = %+v", spec.Mounts[0])
@@ -226,6 +238,9 @@ func TestBuildResolverRunSpec(t *testing.T) {
 	wantGit := filepath.Join(repoDir, ".git")
 	if spec.Mounts[1].HostPath != wantGit || spec.Mounts[1].ContainerPath != wantGit {
 		t.Errorf("git mount = %+v, want host/container = %q", spec.Mounts[1], wantGit)
+	}
+	if spec.Mounts[2].HostPath != "/tmp/wt/.cc-home" || spec.Mounts[2].ContainerPath != "/home/claude" {
+		t.Errorf("home mount = %+v, want /tmp/wt/.cc-home -> /home/claude", spec.Mounts[2])
 	}
 }
 
@@ -237,7 +252,7 @@ func TestBuildResolverRunSpecOmitsMaxTurnsWhenZero(t *testing.T) {
 		Repo: github.Repo{Owner: "o", Name: "n"},
 		WT:   &worktree.Manager{RepoDir: t.TempDir()},
 	}
-	spec := lc.buildResolverRunSpec(1, "main", "claude/issue-1", "/tmp/wt")
+	spec := lc.buildResolverRunSpec(1, "main", "claude/issue-1", "/tmp/wt", "/tmp/wt/.cc-home")
 	if _, ok := spec.Env["CC_MAX_TURNS"]; ok {
 		t.Errorf("CC_MAX_TURNS must be unset when MaxTurns==0; got %q", spec.Env["CC_MAX_TURNS"])
 	}

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -15,6 +16,23 @@ import (
 	"github.com/charleszheng44/cc-crew/internal/github"
 	"github.com/charleszheng44/cc-crew/internal/worktree"
 )
+
+// containerHomePath is the in-container HOME for dispatched tasks. The
+// dispatch flow bind-mounts a host-writable subdir of the worktree here so
+// `git config --global`, `gh auth setup-git`, and the `claude` CLI have a
+// writable HOME under `--user <hostUid>:<hostGid>`. Must match the path the
+// cc-crew-run script reads from $HOME.
+const containerHomePath = "/home/claude"
+
+// prepareContainerHome creates the host-side directory that backs HOME inside
+// the container. Located under the worktree so it's cleaned up alongside it.
+func prepareContainerHome(wtPath string) (string, error) {
+	home := filepath.Join(wtPath, ".cc-home")
+	if err := os.MkdirAll(home, 0o755); err != nil {
+		return "", fmt.Errorf("prepare container home: %w", err)
+	}
+	return home, nil
+}
 
 // Lifecycle is a Dispatcher that runs the full per-task flow:
 // fetch worktree → docker run → clean up labels.
@@ -87,8 +105,15 @@ func (l *Lifecycle) dispatchImplementer(ctx context.Context, log *slog.Logger, n
 		l.failCleanup(ctx, number)
 		return
 	}
+	homePath, err := prepareContainerHome(wtPath)
+	if err != nil {
+		log.Error("prepare container home failed", "err", err)
+		l.failCleanup(ctx, number)
+		l.removeWorktree(ctx, number)
+		return
+	}
 
-	spec := l.buildRunSpec(number, wtPath)
+	spec := l.buildRunSpec(number, wtPath, homePath)
 	runCtx, cancel := context.WithTimeout(ctx, l.TaskTimeout)
 	defer cancel()
 
@@ -127,8 +152,15 @@ func (l *Lifecycle) dispatchReviewer(ctx context.Context, log *slog.Logger, numb
 		l.failCleanup(ctx, number)
 		return
 	}
+	homePath, err := prepareContainerHome(wtPath)
+	if err != nil {
+		log.Error("prepare container home failed", "err", err)
+		l.failCleanup(ctx, number)
+		l.removeWorktree(ctx, number)
+		return
+	}
 
-	spec := l.buildRunSpec(number, wtPath)
+	spec := l.buildRunSpec(number, wtPath, homePath)
 	runCtx, cancel := context.WithTimeout(ctx, l.TaskTimeout)
 	defer cancel()
 
@@ -206,8 +238,15 @@ func (l *Lifecycle) dispatchAddresser(ctx context.Context, log *slog.Logger, num
 		l.failCleanup(ctx, number)
 		return
 	}
+	homePath, err := prepareContainerHome(wtPath)
+	if err != nil {
+		log.Error("prepare container home failed", "err", err)
+		l.failCleanup(ctx, number)
+		l.removeAddresserWorktree(ctx, number)
+		return
+	}
 
-	spec := l.buildAddresserRunSpec(number, issueNum, reviewIDs, wtPath)
+	spec := l.buildAddresserRunSpec(number, issueNum, reviewIDs, wtPath, homePath)
 	runCtx, cancel := context.WithTimeout(ctx, l.TaskTimeout)
 	defer cancel()
 
@@ -227,7 +266,7 @@ func (l *Lifecycle) dispatchAddresser(ctx context.Context, log *slog.Logger, num
 	l.removeAddresserWorktree(ctx, number)
 }
 
-func (l *Lifecycle) buildRunSpec(number int, wtPath string) docker.RunSpec {
+func (l *Lifecycle) buildRunSpec(number int, wtPath, homePath string) docker.RunSpec {
 	name := fmt.Sprintf("cc-crew-%s-%s-%s-%d",
 		roleShort(l.Kind),
 		safeName(l.Repo.Owner), safeName(l.Repo.Name), number)
@@ -248,8 +287,11 @@ func (l *Lifecycle) buildRunSpec(number int, wtPath string) docker.RunSpec {
 		"GIT_COMMITTER_NAME":      l.GitName,
 		"GIT_COMMITTER_EMAIL":     l.GitEmail,
 		// Containers are ephemeral (--rm) with a bind-mounted worktree; this
-		// lets `claude --dangerously-skip-permissions` run as root inside.
+		// keeps the `claude` CLI's sandbox-only checks satisfied.
 		"IS_SANDBOX": "1",
+		// HOME points at the bind-mounted host dir so `git config --global`,
+		// `gh auth setup-git`, and `claude` have a writable home under --user.
+		"HOME": containerHomePath,
 	}
 	// Only cap turns when the operator asked for a cap; absent = unlimited.
 	if l.MaxTurns > 0 {
@@ -267,9 +309,12 @@ func (l *Lifecycle) buildRunSpec(number int, wtPath string) docker.RunSpec {
 		prefix = fmt.Sprintf("[pr-%d] ", number)
 	}
 
+	uid, gid := os.Getuid(), os.Getgid()
 	return docker.RunSpec{
 		Image:  l.Image,
 		Name:   name,
+		UID:    &uid,
+		GID:    &gid,
 		Labels: labels,
 		Env:    env,
 		Stdout: NewPrefixedWriter(lockedStdout, prefix, number),
@@ -283,6 +328,7 @@ func (l *Lifecycle) buildRunSpec(number int, wtPath string) docker.RunSpec {
 				HostPath:      filepath.Join(l.WT.RepoDir, ".git"),
 				ContainerPath: filepath.Join(l.WT.RepoDir, ".git"),
 			},
+			{HostPath: homePath, ContainerPath: containerHomePath},
 		},
 	}
 }
@@ -319,7 +365,7 @@ func (l *Lifecycle) snapshotUnaddressedReviews(ctx context.Context, prNumber int
 	return out, nil
 }
 
-func (l *Lifecycle) buildAddresserRunSpec(prNumber, issueNum int, reviewIDs []int, wtPath string) docker.RunSpec {
+func (l *Lifecycle) buildAddresserRunSpec(prNumber, issueNum int, reviewIDs []int, wtPath, homePath string) docker.RunSpec {
 	name := fmt.Sprintf("cc-crew-addr-%s-%s-%d",
 		safeName(l.Repo.Owner), safeName(l.Repo.Name), prNumber)
 
@@ -350,14 +396,18 @@ func (l *Lifecycle) buildAddresserRunSpec(prNumber, issueNum int, reviewIDs []in
 		"GIT_COMMITTER_NAME":      l.GitName,
 		"GIT_COMMITTER_EMAIL":     l.GitEmail,
 		"IS_SANDBOX":              "1",
+		"HOME":                    containerHomePath,
 	}
 	if l.MaxTurns > 0 {
 		env["CC_MAX_TURNS"] = fmt.Sprint(l.MaxTurns)
 	}
 	prPrefix := fmt.Sprintf("[pr-%d] ", prNumber)
+	uid, gid := os.Getuid(), os.Getgid()
 	return docker.RunSpec{
 		Image:  l.Image,
 		Name:   name,
+		UID:    &uid,
+		GID:    &gid,
 		Labels: labels,
 		Env:    env,
 		Stdout: NewPrefixedWriter(lockedStdout, prPrefix, prNumber),
@@ -368,6 +418,7 @@ func (l *Lifecycle) buildAddresserRunSpec(prNumber, issueNum int, reviewIDs []in
 				HostPath:      filepath.Join(l.WT.RepoDir, ".git"),
 				ContainerPath: filepath.Join(l.WT.RepoDir, ".git"),
 			},
+			{HostPath: homePath, ContainerPath: containerHomePath},
 		},
 	}
 }

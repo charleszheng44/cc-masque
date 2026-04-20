@@ -19,6 +19,11 @@ type RunSpec struct {
 	Mounts []Mount
 	Stdout io.Writer
 	Stderr io.Writer
+	// UID/GID, when both non-nil, render as `--user UID:GID`. Set by callers
+	// to the host's uid/gid so files the container writes into bind-mounted
+	// host paths (notably .git/objects) are owned by the host user, not root.
+	UID *int
+	GID *int
 }
 
 type Mount struct {
@@ -38,6 +43,9 @@ func New() *Runner { return &Runner{Bin: "docker"} }
 // `docker run --rm`. Exposed for testing.
 func BuildRunArgs(s RunSpec) []string {
 	args := []string{"run", "--rm", "--name", s.Name}
+	if s.UID != nil && s.GID != nil {
+		args = append(args, "--user", fmt.Sprintf("%d:%d", *s.UID, *s.GID))
+	}
 	keys := make([]string, 0, len(s.Labels))
 	for k := range s.Labels {
 		keys = append(keys, k)
