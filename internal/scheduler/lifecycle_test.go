@@ -376,3 +376,91 @@ func containsLabel(ss []string, v string) bool {
 	}
 	return false
 }
+
+func TestReviewerSuccessCleanupAppliesMergeLabelOnApproval(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "o", Name: "n"}
+	f.PRs[7] = &github.PullRequest{
+		Number: 7, State: "open", HeadRefOid: "sha7",
+		Labels: []string{"claude-review", "claude-reviewing"},
+	}
+	f.Reviews[7] = []github.Review{
+		{ID: 1, Author: "bot", State: "APPROVED", At: time.Now()},
+	}
+	lc := &Lifecycle{
+		Kind: claim.KindReviewer, Claimer: claim.New(f, repo), GH: f, Repo: repo,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-review", LockLabel: "claude-reviewing", DoneLabel: "claude-reviewed",
+		MergeLabel: "claude-merge", AddressLabel: "claude-address",
+	}
+	lc.successCleanupReviewer(context.Background(), 7, "sha7")
+	labels := f.PRs[7].Labels
+	if !containsLabel(labels, "claude-reviewed") {
+		t.Errorf("expected claude-reviewed, got %v", labels)
+	}
+	if !containsLabel(labels, "claude-merge") {
+		t.Errorf("expected claude-merge, got %v", labels)
+	}
+	if containsLabel(labels, "claude-address") {
+		t.Errorf("unexpected claude-address, got %v", labels)
+	}
+	if containsLabel(labels, "claude-review") || containsLabel(labels, "claude-reviewing") {
+		t.Errorf("queue/lock labels should be gone: %v", labels)
+	}
+}
+
+func TestReviewerSuccessCleanupAppliesAddressLabelOnChangesRequested(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "o", Name: "n"}
+	f.PRs[8] = &github.PullRequest{
+		Number: 8, State: "open", HeadRefOid: "sha8",
+		Labels: []string{"claude-review", "claude-reviewing", "claude-merge"},
+	}
+	f.Reviews[8] = []github.Review{
+		{ID: 1, Author: "bot", State: "APPROVED", At: time.Now().Add(-time.Hour)},
+		{ID: 2, Author: "bot", State: "CHANGES_REQUESTED", At: time.Now()},
+	}
+	lc := &Lifecycle{
+		Kind: claim.KindReviewer, Claimer: claim.New(f, repo), GH: f, Repo: repo,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-review", LockLabel: "claude-reviewing", DoneLabel: "claude-reviewed",
+		MergeLabel: "claude-merge", AddressLabel: "claude-address",
+	}
+	lc.successCleanupReviewer(context.Background(), 8, "sha8")
+	labels := f.PRs[8].Labels
+	if containsLabel(labels, "claude-merge") {
+		t.Errorf("claude-merge should have been removed; got %v", labels)
+	}
+	if !containsLabel(labels, "claude-address") {
+		t.Errorf("expected claude-address, got %v", labels)
+	}
+	if !containsLabel(labels, "claude-reviewed") {
+		t.Errorf("expected claude-reviewed, got %v", labels)
+	}
+}
+
+func TestReviewerSuccessCleanupCommentedDoesNotFlip(t *testing.T) {
+	f := github.NewFake()
+	repo := github.Repo{Owner: "o", Name: "n"}
+	f.PRs[9] = &github.PullRequest{
+		Number: 9, State: "open", HeadRefOid: "sha9",
+		Labels: []string{"claude-review", "claude-reviewing"},
+	}
+	f.Reviews[9] = []github.Review{
+		{ID: 1, Author: "bot", State: "COMMENTED", At: time.Now()},
+	}
+	lc := &Lifecycle{
+		Kind: claim.KindReviewer, Claimer: claim.New(f, repo), GH: f, Repo: repo,
+		Log:        slog.New(slog.NewTextHandler(os.Stderr, nil)),
+		QueueLabel: "claude-review", LockLabel: "claude-reviewing", DoneLabel: "claude-reviewed",
+		MergeLabel: "claude-merge", AddressLabel: "claude-address",
+	}
+	lc.successCleanupReviewer(context.Background(), 9, "sha9")
+	labels := f.PRs[9].Labels
+	if containsLabel(labels, "claude-merge") || containsLabel(labels, "claude-address") {
+		t.Errorf("COMMENTED should not flip queue labels; got %v", labels)
+	}
+	if !containsLabel(labels, "claude-reviewed") {
+		t.Errorf("expected claude-reviewed, got %v", labels)
+	}
+}
