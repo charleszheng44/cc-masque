@@ -316,7 +316,7 @@ type ghBlockedByItem struct {
 
 func (c *ghClient) CountOpenBlockers(ctx context.Context, r Repo, n int) (int, error) {
 	out, err := c.runGh(ctx, "api",
-		"-H", "X-GitHub-Api-Version: 2025-08-21",
+		"-H", "X-GitHub-Api-Version: 2026-03-10",
 		fmt.Sprintf("repos/%s/issues/%d/dependencies/blocked_by", r.String(), n))
 	if err != nil {
 		return 0, err
