@@ -255,3 +255,94 @@ func TestResetCleansLegacyTagsNamespace(t *testing.T) {
 		}
 	}
 }
+
+func TestExecuteClearsMergerAndResolverLabels(t *testing.T) {
+	f := github.NewFake()
+	r := github.Repo{Owner: "a", Name: "b"}
+	f.PRs[50] = &github.PullRequest{
+		Number: 50, State: "open",
+		Labels: []string{
+			"claude-merge", "claude-merging",
+			"claude-resolve-conflict", "claude-resolving",
+			"claude-conflict-blocked",
+		},
+	}
+
+	wt := worktree.New(t.TempDir())
+	dr := docker.New()
+	o := Options{
+		GH: f, Docker: dr, WT: wt, Repo: r,
+		TaskLabel: "claude-task", ProcessingLabel: "claude-processing", DoneLabel: "claude-done",
+		ReviewLabel: "claude-review", ReviewingLabel: "claude-reviewing", ReviewedLabel: "claude-reviewed",
+		AddressLabel: "claude-address", AddressingLabel: "claude-addressing", AddressedLabel: "claude-addressed",
+		MergeLabel: "claude-merge", MergingLabel: "claude-merging",
+		ResolveConflictLabel: "claude-resolve-conflict", ResolvingLabel: "claude-resolving",
+		ConflictBlockedLabel: "claude-conflict-blocked",
+	}
+	plan := Plan{ReviewerPRs: []int{50}}
+
+	var buf bytes.Buffer
+	if err := Execute(context.Background(), o, plan, &buf); err != nil {
+		t.Logf("Execute error (likely from Prune on non-repo tmpdir): %v", err)
+	}
+	for _, stale := range []string{
+		"claude-merge", "claude-merging",
+		"claude-resolve-conflict", "claude-resolving",
+		"claude-conflict-blocked",
+	} {
+		if hasLabel(f.PRs[50].Labels, stale) {
+			t.Errorf("%q not cleared: %v", stale, f.PRs[50].Labels)
+		}
+	}
+}
+
+func TestExecuteDeletesMergerAndResolverRefs(t *testing.T) {
+	f := github.NewFake()
+	r := github.Repo{Owner: "a", Name: "b"}
+	refs := []string{
+		"refs/cc-crew/merge-lock/pr-60",
+		"refs/cc-crew/merge-claim/pr-60/20260420T120000Z",
+		"refs/cc-crew/resolve-lock/pr-60",
+		"refs/cc-crew/resolve-claim/pr-60/20260420T120000Z",
+	}
+	for _, ref := range refs {
+		f.Refs[ref] = "sha"
+	}
+
+	wt := worktree.New(t.TempDir())
+	dr := docker.New()
+	o := Options{
+		GH: f, Docker: dr, WT: wt, Repo: r,
+		TaskLabel: "claude-task", ProcessingLabel: "claude-processing", DoneLabel: "claude-done",
+		ReviewLabel: "claude-review", ReviewingLabel: "claude-reviewing", ReviewedLabel: "claude-reviewed",
+	}
+	plan := Plan{Refs: refs}
+
+	var buf bytes.Buffer
+	if err := Execute(context.Background(), o, plan, &buf); err != nil {
+		t.Logf("Execute error (likely from Prune on non-repo tmpdir): %v", err)
+	}
+	for _, ref := range refs {
+		if _, ok := f.Refs[ref]; ok {
+			t.Errorf("ref not deleted: %s", ref)
+		}
+	}
+}
+
+func TestRefPrefixesIncludesMergerAndResolverPrefixes(t *testing.T) {
+	want := []string{
+		"cc-crew/merge-lock/pr-",
+		"cc-crew/merge-claim/pr-",
+		"cc-crew/resolve-lock/pr-",
+		"cc-crew/resolve-claim/pr-",
+	}
+	have := map[string]bool{}
+	for _, p := range refPrefixes {
+		have[p] = true
+	}
+	for _, w := range want {
+		if !have[w] {
+			t.Errorf("refPrefixes missing %q", w)
+		}
+	}
+}
