@@ -83,7 +83,8 @@ One iteration per open PR carrying `claude-merge` and not `claude-merging`:
    - `CLEAN` → step 7.
    - `BEHIND` (branch is behind base but no conflict) → call `PUT /repos/:o/:r/pulls/:n/update-branch` with `expected_head_sha` and `update_method: "rebase"`. Release claim, retry next tick once GitHub reports updated.
    - `DIRTY` (true conflict) → **dispatch resolver path**: add `claude-resolve-conflict`, remove `claude-merging`, release the merger claim. Leave `claude-merge` on so the next merger tick retries automatically once the resolver succeeds.
-   - Anything else (`BLOCKED`, `DRAFT`, `UNKNOWN`) → terminal failure as in step 5's FAILURE branch.
+   - `UNKNOWN` or empty (GitHub has not yet computed mergeability) → **retry**: release the merger claim, leave `claude-merge` on, exit. The next scheduler tick re-queries. If UNKNOWN persists across many ticks, the repeated-dispatch quarantine (`claude-failed`) is the escalation path — the merger itself does not escalate.
+   - `BLOCKED` or `DRAFT` → terminal failure as in step 5's FAILURE branch.
 7. **Merge.** `gh pr merge <n> --rebase --delete-branch`. On success: remove `claude-merging` and `claude-merge` (the PR is closed by GitHub). On error whose message does not indicate conflict → terminal failure. On conflict-indicating error → resolver path as in step 6.
 
 ## 7. Flow — resolver tick
@@ -122,7 +123,8 @@ New fields on `internal/config/config.Config`:
 | Trigger | Action |
 |---|---|
 | Required check failed / timed out | `claude-conflict-blocked`, comment names the check, merger exits. |
-| Mergeable state `BLOCKED`/`DRAFT`/`UNKNOWN` | `claude-conflict-blocked`, comment reports state, merger exits. |
+| Mergeable state `BLOCKED`/`DRAFT` | `claude-conflict-blocked`, comment reports state, merger exits. |
+| Mergeable state `UNKNOWN`/empty | Transient — release claim, leave `claude-merge` on, next tick retries. Quarantine (`claude-failed`) is the backstop after N consecutive ticks. |
 | `gh pr merge` non-conflict error (e.g., permission) | `claude-conflict-blocked`, comment includes stderr, merger exits. |
 | Resolver container non-zero exit | `claude-conflict-blocked`, comment includes agent summary, `claude-merge` removed. |
 | Resolver container timeout | same as non-zero exit. |

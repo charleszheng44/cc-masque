@@ -81,16 +81,16 @@ func TestMergerDirtyDispatchesResolverAndReleases(t *testing.T) {
 
 func TestMergerTerminalMergeStates(t *testing.T) {
 	// Each state in this table must route to the terminal branch per spec:
-	// BLOCKED/DRAFT/UNKNOWN (and empty) are terminal, as is any unrecognized
-	// state value (default arm).
+	// BLOCKED and DRAFT are terminal, as is any unrecognized state value
+	// (default arm). UNKNOWN and empty are NOT in this table — they are
+	// GitHub's "still computing" signal and retry instead (see
+	// TestMergerUnknownMergeStateIsRetry).
 	cases := []struct {
 		name  string
 		state string
 	}{
 		{"blocked", "BLOCKED"},
 		{"draft", "DRAFT"},
-		{"unknown", "UNKNOWN"},
-		{"empty", ""},
 		{"bogus", "NOT_A_REAL_STATE"},
 	}
 	for _, tc := range cases {
@@ -111,6 +111,44 @@ func TestMergerTerminalMergeStates(t *testing.T) {
 			}
 			if len(f.Comments[4]) == 0 {
 				t.Errorf("state %q: expected escalation comment on PR", tc.state)
+			}
+		})
+	}
+}
+
+// UNKNOWN (and empty) mergeStateStatus is GitHub's "still computing"
+// signal — not a terminal failure. The merger must release its lock
+// but leave claude-merge on so the next scheduler tick retries, and
+// must not add claude-conflict-blocked.
+func TestMergerUnknownMergeStateIsRetry(t *testing.T) {
+	cases := []struct {
+		name  string
+		state string
+	}{
+		{"unknown", "UNKNOWN"},
+		{"empty", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			f := github.NewFake()
+			repo := github.Repo{Owner: "o", Name: "n"}
+			f.PRs[10] = &github.PullRequest{
+				Number: 10, State: "open", HeadRefOid: "sha", BaseRefName: "main",
+				Labels: []string{"claude-merge", "claude-merging"}, MergeStateStatus: tc.state,
+			}
+			lc := newMergerLifecycle(f, repo)
+			lc.dispatchMerger(context.Background(), slog.Default(), 10)
+			if containsLabel(f.PRs[10].Labels, "claude-conflict-blocked") {
+				t.Errorf("state %q: must not escalate to claude-conflict-blocked: %v", tc.state, f.PRs[10].Labels)
+			}
+			if !containsLabel(f.PRs[10].Labels, "claude-merge") {
+				t.Errorf("state %q: claude-merge should stay for next-tick retry: %v", tc.state, f.PRs[10].Labels)
+			}
+			if containsLabel(f.PRs[10].Labels, "claude-merging") {
+				t.Errorf("state %q: claude-merging should be released: %v", tc.state, f.PRs[10].Labels)
+			}
+			if len(f.Comments[10]) != 0 {
+				t.Errorf("state %q: no escalation comment expected, got %v", tc.state, f.Comments[10])
 			}
 		})
 	}
