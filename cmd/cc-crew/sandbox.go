@@ -16,13 +16,23 @@ import (
 
 const sandboxImage = "ghcr.io/charleszheng44/cc-crew-sandbox"
 
-func runSandbox(_ []string) int {
+func runSandbox(args []string) int {
+	flags, err := parseSandboxFlags(args)
+	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(os.Stdout, sandboxUsage)
+			return 0
+		}
+		fmt.Fprintf(os.Stderr, "cc-crew sandbox: %v\n\n", err)
+		fmt.Fprintln(os.Stderr, sandboxUsage)
+		return 2
+	}
+
 	repoName, err := gitRepoName()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cc-crew sandbox: %v\n", err)
 		return 1
 	}
-
 	name := fmt.Sprintf("cc-crew-sandbox-%s-%d", repoName, time.Now().Unix())
 
 	cwd, err := os.Getwd()
@@ -31,35 +41,46 @@ func runSandbox(_ []string) int {
 		return 1
 	}
 
-	home, err := os.UserHomeDir()
+	sandboxHome, err := sandboxHomeDir(repoName)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "cc-crew sandbox: home dir: %v\n", err)
+		fmt.Fprintf(os.Stderr, "cc-crew sandbox: prepare sandbox home: %v\n", err)
 		return 1
 	}
 
-	runArgs := []string{
-		"run", "-d", "--rm",
-		"--name", name,
-		"-v", cwd + ":/workspace",
-		"-v", home + "/.claude:/home/claude/.claude",
-	}
-	runArgs = appendEnv(runArgs, "CLAUDE_CODE_OAUTH_TOKEN", os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"))
-	runArgs = appendEnv(runArgs, "ANTHROPIC_API_KEY", os.Getenv("ANTHROPIC_API_KEY"))
-	// Implementer GitHub token: prefer GH_TOKEN_IMPLEMENTER, fall back to GH_TOKEN.
 	ghToken := os.Getenv("GH_TOKEN_IMPLEMENTER")
 	if ghToken == "" {
 		ghToken = os.Getenv("GH_TOKEN")
 	}
-	runArgs = appendEnv(runArgs, "GH_TOKEN", ghToken)
 	gitName := os.Getenv("IMPLEMENTER_GIT_NAME")
-	runArgs = appendEnv(runArgs, "GIT_AUTHOR_NAME", gitName)
-	runArgs = appendEnv(runArgs, "GIT_COMMITTER_NAME", gitName)
 	gitEmail := os.Getenv("IMPLEMENTER_GIT_EMAIL")
-	runArgs = appendEnv(runArgs, "GIT_AUTHOR_EMAIL", gitEmail)
-	runArgs = appendEnv(runArgs, "GIT_COMMITTER_EMAIL", gitEmail)
-	runArgs = append(runArgs, sandboxImage)
 
-	start := exec.Command("docker", runArgs...)
+	opts := sandboxOpts{
+		name:        name,
+		image:       sandboxImage,
+		cwd:         cwd,
+		sandboxHome: sandboxHome,
+		uid:         os.Getuid(),
+		gid:         os.Getgid(),
+		env: map[string]string{
+			"CLAUDE_CODE_OAUTH_TOKEN": os.Getenv("CLAUDE_CODE_OAUTH_TOKEN"),
+			"ANTHROPIC_API_KEY":       os.Getenv("ANTHROPIC_API_KEY"),
+			"GH_TOKEN":                ghToken,
+			"GIT_AUTHOR_NAME":         gitName,
+			"GIT_COMMITTER_NAME":      gitName,
+			"GIT_AUTHOR_EMAIL":        gitEmail,
+			"GIT_COMMITTER_EMAIL":     gitEmail,
+		},
+	}
+	if flags.useHostClaude {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cc-crew sandbox: home dir: %v\n", err)
+			return 1
+		}
+		opts.hostClaudeDir = filepath.Join(home, ".claude")
+	}
+
+	start := exec.Command("docker", buildSandboxRunArgs(opts)...)
 	start.Stderr = os.Stderr
 	if err := start.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "cc-crew sandbox: docker run failed: %v\n", err)
@@ -82,6 +103,16 @@ func runSandbox(_ []string) int {
 	return 0
 }
 
+const sandboxUsage = `Usage: cc-crew sandbox [flags]
+
+Run an interactive Claude Code session in a per-repo sandbox container.
+
+Flags:
+  --use-host-claude   Bind-mount your host ~/.claude into the sandbox so
+                      plugins, skills, MCP servers, and history are shared
+                      with host Claude Code. Default: isolated sandbox with
+                      its own persistent ~/.cache/cc-crew/sandbox-home/<repo>.`
+
 func gitRepoName() (string, error) {
 	out, err := exec.Command("git", "rev-parse", "--show-toplevel").Output()
 	if err != nil {
@@ -89,13 +120,6 @@ func gitRepoName() (string, error) {
 	}
 	toplevel := strings.TrimSpace(string(out))
 	return sandboxSafeName(filepath.Base(toplevel)), nil
-}
-
-func appendEnv(args []string, key, val string) []string {
-	if val == "" {
-		return args
-	}
-	return append(args, "-e", key+"="+val)
 }
 
 // sandboxFlags is the parsed `cc-crew sandbox` CLI flag set.

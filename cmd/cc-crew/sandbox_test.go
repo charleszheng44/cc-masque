@@ -1,6 +1,8 @@
 package main
 
 import (
+	"errors"
+	"flag"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -166,5 +168,12 @@ func TestParseSandboxFlags_UnknownFlagErrors(t *testing.T) {
 func TestParseSandboxFlags_PositionalArgsError(t *testing.T) {
 	if _, err := parseSandboxFlags([]string{"extra"}); err == nil {
 		t.Fatalf("expected error for positional arg, got nil")
+	}
+}
+
+func TestParseSandboxFlags_HelpReturnsErrHelp(t *testing.T) {
+	_, err := parseSandboxFlags([]string{"--help"})
+	if !errors.Is(err, flag.ErrHelp) {
+		t.Fatalf("expected flag.ErrHelp, got %v", err)
 	}
 }
