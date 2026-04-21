@@ -19,6 +19,10 @@ const sandboxImage = "ghcr.io/charleszheng44/cc-crew-sandbox"
 func runSandbox(args []string) int {
 	flags, err := parseSandboxFlags(args)
 	if err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			fmt.Fprintln(os.Stdout, sandboxUsage)
+			return 0
+		}
 		fmt.Fprintf(os.Stderr, "cc-crew sandbox: %v\n\n", err)
 		fmt.Fprintln(os.Stderr, sandboxUsage)
 		return 2
@@ -34,12 +38,6 @@ func runSandbox(args []string) int {
 	cwd, err := os.Getwd()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "cc-crew sandbox: getwd: %v\n", err)
-		return 1
-	}
-
-	home, err := os.UserHomeDir()
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "cc-crew sandbox: home dir: %v\n", err)
 		return 1
 	}
 
@@ -74,6 +72,11 @@ func runSandbox(args []string) int {
 		},
 	}
 	if flags.useHostClaude {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "cc-crew sandbox: home dir: %v\n", err)
+			return 1
+		}
 		opts.hostClaudeDir = filepath.Join(home, ".claude")
 	}
 
