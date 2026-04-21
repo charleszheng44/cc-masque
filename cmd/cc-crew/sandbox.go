@@ -2,7 +2,9 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -94,6 +96,30 @@ func appendEnv(args []string, key, val string) []string {
 		return args
 	}
 	return append(args, "-e", key+"="+val)
+}
+
+// sandboxFlags is the parsed `cc-crew sandbox` CLI flag set.
+type sandboxFlags struct {
+	useHostClaude bool
+}
+
+// parseSandboxFlags parses CLI args for `cc-crew sandbox`. Returns an error on
+// unknown flags or unexpected positional arguments. The error from the
+// underlying FlagSet already includes a usage hint; the caller is expected to
+// surface it to stderr verbatim.
+func parseSandboxFlags(args []string) (sandboxFlags, error) {
+	fs := flag.NewFlagSet("cc-crew sandbox", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	var f sandboxFlags
+	fs.BoolVar(&f.useHostClaude, "use-host-claude", false,
+		"Bind-mount host ~/.claude into the sandbox so plugins, skills, MCP servers, and history are shared with host Claude Code.")
+	if err := fs.Parse(args); err != nil {
+		return sandboxFlags{}, err
+	}
+	if fs.NArg() > 0 {
+		return sandboxFlags{}, fmt.Errorf("unexpected positional arguments: %v", fs.Args())
+	}
+	return f, nil
 }
 
 // sandboxOpts is the set of inputs needed to build the `docker run` argv for

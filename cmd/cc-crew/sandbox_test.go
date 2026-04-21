@@ -136,3 +136,35 @@ func TestBuildSandboxRunArgs_EnvSortedAndEmptyFiltered(t *testing.T) {
 		t.Fatalf("got %v\nwant %v", args, want)
 	}
 }
+
+func TestParseSandboxFlags_Default(t *testing.T) {
+	f, err := parseSandboxFlags(nil)
+	if err != nil {
+		t.Fatalf("parseSandboxFlags: %v", err)
+	}
+	if f.useHostClaude {
+		t.Fatalf("default should be useHostClaude=false, got true")
+	}
+}
+
+func TestParseSandboxFlags_UseHostClaude(t *testing.T) {
+	f, err := parseSandboxFlags([]string{"--use-host-claude"})
+	if err != nil {
+		t.Fatalf("parseSandboxFlags: %v", err)
+	}
+	if !f.useHostClaude {
+		t.Fatalf("expected useHostClaude=true")
+	}
+}
+
+func TestParseSandboxFlags_UnknownFlagErrors(t *testing.T) {
+	if _, err := parseSandboxFlags([]string{"--bogus"}); err == nil {
+		t.Fatalf("expected error for unknown flag, got nil")
+	}
+}
+
+func TestParseSandboxFlags_PositionalArgsError(t *testing.T) {
+	if _, err := parseSandboxFlags([]string{"extra"}); err == nil {
+		t.Fatalf("expected error for positional arg, got nil")
+	}
+}
