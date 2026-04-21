@@ -42,7 +42,7 @@ Usage:
   cc-crew up       Start the orchestrator (foreground)
   cc-crew status   Print current task/queue snapshot
   cc-crew reset    Bulk-clean all cc-crew state in the repo
-  cc-crew sandbox  Launch an interactive Claude Code session in a sandboxed Ubuntu container
+  cc-crew sandbox  Launch an interactive Claude Code session (use --use-host-claude to share host ~/.claude)
   cc-crew version  Print version
   cc-crew help     Show this help`)
 }
