@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 )
@@ -93,6 +94,51 @@ func appendEnv(args []string, key, val string) []string {
 		return args
 	}
 	return append(args, "-e", key+"="+val)
+}
+
+// sandboxOpts is the set of inputs needed to build the `docker run` argv for
+// `cc-crew sandbox`. All fields are required except hostClaudeDir, which is
+// empty unless the user passed --use-host-claude.
+type sandboxOpts struct {
+	name          string
+	image         string
+	cwd           string
+	sandboxHome   string
+	hostClaudeDir string
+	uid, gid      int
+	env           map[string]string
+}
+
+// buildSandboxRunArgs constructs the argv (excluding the `docker` binary) for
+// the sandbox container. Pure: no I/O, no env reads. Mount order matters when
+// hostClaudeDir is set — the parent (/home/claude) must come before the nested
+// (/home/claude/.claude). Env vars are emitted in sorted key order; empty
+// values are filtered.
+func buildSandboxRunArgs(o sandboxOpts) []string {
+	args := []string{
+		"run", "-d", "--rm",
+		"--name", o.name,
+		"--user", fmt.Sprintf("%d:%d", o.uid, o.gid),
+		"-v", o.cwd + ":/workspace",
+		"-v", o.sandboxHome + ":/home/claude",
+	}
+	if o.hostClaudeDir != "" {
+		args = append(args, "-v", o.hostClaudeDir+":/home/claude/.claude")
+	}
+	keys := make([]string, 0, len(o.env))
+	for k := range o.env {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		v := o.env[k]
+		if v == "" {
+			continue
+		}
+		args = append(args, "-e", k+"="+v)
+	}
+	args = append(args, o.image)
+	return args
 }
 
 // sandboxHomeDir returns the persistent host directory bind-mounted at

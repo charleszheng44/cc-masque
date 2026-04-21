@@ -3,6 +3,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -56,5 +57,82 @@ func TestSandboxHomeDir_DoesNotOverwriteExistingSeed(t *testing.T) {
 	}
 	if string(got) != string(custom) {
 		t.Fatalf("seed was overwritten:\n got %q\nwant %q", got, custom)
+	}
+}
+
+func TestBuildSandboxRunArgs_Default(t *testing.T) {
+	args := buildSandboxRunArgs(sandboxOpts{
+		name:        "ctr",
+		image:       "img:tag",
+		cwd:         "/workspace-host",
+		sandboxHome: "/sbx-home",
+		uid:         1234,
+		gid:         5678,
+		env:         map[string]string{"FOO": "bar"},
+	})
+	want := []string{
+		"run", "-d", "--rm",
+		"--name", "ctr",
+		"--user", "1234:5678",
+		"-v", "/workspace-host:/workspace",
+		"-v", "/sbx-home:/home/claude",
+		"-e", "FOO=bar",
+		"img:tag",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("got %v\nwant %v", args, want)
+	}
+}
+
+func TestBuildSandboxRunArgs_UseHostClaude(t *testing.T) {
+	args := buildSandboxRunArgs(sandboxOpts{
+		name:          "ctr",
+		image:         "img:tag",
+		cwd:           "/workspace-host",
+		sandboxHome:   "/sbx-home",
+		hostClaudeDir: "/host/.claude",
+		uid:           1234,
+		gid:           5678,
+	})
+	// Mount order: parent (/home/claude) before nested (/home/claude/.claude).
+	want := []string{
+		"run", "-d", "--rm",
+		"--name", "ctr",
+		"--user", "1234:5678",
+		"-v", "/workspace-host:/workspace",
+		"-v", "/sbx-home:/home/claude",
+		"-v", "/host/.claude:/home/claude/.claude",
+		"img:tag",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("got %v\nwant %v", args, want)
+	}
+}
+
+func TestBuildSandboxRunArgs_EnvSortedAndEmptyFiltered(t *testing.T) {
+	args := buildSandboxRunArgs(sandboxOpts{
+		name:        "ctr",
+		image:       "img",
+		cwd:         "/cwd",
+		sandboxHome: "/sbx",
+		uid:         1, gid: 2,
+		env: map[string]string{
+			"ZED":   "z",
+			"ALPHA": "a",
+			"EMPTY": "",
+		},
+	})
+	want := []string{
+		"run", "-d", "--rm",
+		"--name", "ctr",
+		"--user", "1:2",
+		"-v", "/cwd:/workspace",
+		"-v", "/sbx:/home/claude",
+		"-e", "ALPHA=a",
+		"-e", "ZED=z",
+		"img",
+	}
+	if !reflect.DeepEqual(args, want) {
+		t.Fatalf("got %v\nwant %v", args, want)
 	}
 }
