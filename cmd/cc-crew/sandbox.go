@@ -1,7 +1,9 @@
 package main
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -91,6 +93,37 @@ func appendEnv(args []string, key, val string) []string {
 		return args
 	}
 	return append(args, "-e", key+"="+val)
+}
+
+// sandboxHomeDir returns the persistent host directory bind-mounted at
+// /home/claude inside the sandbox container. The directory is created on
+// first use and seeded with the onboarding-skip JSON so the in-container
+// `claude` CLI does not prompt for setup. Subsequent calls reuse the existing
+// directory and leave any existing seed file alone.
+func sandboxHomeDir(repoName string) (string, error) {
+	base := os.Getenv("XDG_CACHE_HOME")
+	if base == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("user home dir: %w", err)
+		}
+		base = filepath.Join(home, ".cache")
+	}
+	dir := filepath.Join(base, "cc-crew", "sandbox-home", repoName)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("mkdir %s: %w", dir, err)
+	}
+	seed := filepath.Join(dir, ".claude.json")
+	if _, err := os.Stat(seed); err != nil {
+		if !errors.Is(err, fs.ErrNotExist) {
+			return "", fmt.Errorf("stat %s: %w", seed, err)
+		}
+		const body = `{"hasCompletedOnboarding":true,"bypassPermissionsModeAccepted":true,"theme":"dark"}`
+		if err := os.WriteFile(seed, []byte(body), 0o644); err != nil {
+			return "", fmt.Errorf("write %s: %w", seed, err)
+		}
+	}
+	return dir, nil
 }
 
 func sandboxSafeName(s string) string {
