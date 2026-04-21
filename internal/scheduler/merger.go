@@ -46,11 +46,13 @@ func (l *Lifecycle) dispatchMerger(ctx context.Context, log *slog.Logger, number
 	case "DRAFT":
 		l.mergerTerminal(ctx, log, &pr, "PR is still a draft; mark ready-for-review to merge")
 	case "UNKNOWN", "":
-		// Per spec (docs/superpowers/specs/2026-04-20-auto-merger-design.md §6, §9):
-		// BLOCKED/DRAFT/UNKNOWN are terminal. Empty string falls through here
-		// too — a malformed/missing mergeStateStatus escalates rather than
-		// silently looping.
-		l.mergerTerminal(ctx, log, &pr, fmt.Sprintf("mergeStateStatus is %q; merger cannot proceed", pr.MergeStateStatus))
+		// UNKNOWN is GitHub's "mergeability not yet computed" signal —
+		// transient, typically resolves within seconds. Empty string is the
+		// same defensively. Release the lock via the deferred cleanup and
+		// leave claude-merge on so the next scheduler tick retries. If this
+		// genuinely never resolves, the repeated-dispatch quarantine
+		// (claude-failed) catches it.
+		log.Info("mergeStateStatus not yet computed; retrying next tick", "pr", pr.Number)
 	default:
 		l.mergerTerminal(ctx, log, &pr, fmt.Sprintf("unknown mergeStateStatus: %s", pr.MergeStateStatus))
 	}
