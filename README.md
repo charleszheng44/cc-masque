@@ -1,207 +1,218 @@
 # cc-crew
 
-Run multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions locally, each acting as a different role with its own remote service access (GitHub account, Claude auth, etc.). Built on `node:lts-alpine` with `git`, `bash`, `gh`, and the Claude Code CLI pre-installed. Spin up one container per persona — each gets its own `GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, git identity, and scoped permissions — then fire `claude -p "..."` commands at any of them from the host.
+Run multiple [Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions locally as distinct GitHub personas (implementer, reviewer, merger, resolver) that cooperate on your repo through GitHub labels. Label an issue `claude-task` — the implementer picks it up, opens a PR, the reviewer reviews it, the implementer addresses feedback, and (optionally) the merger merges it. Everything runs in local Docker containers with scoped tokens.
 
 ![cc-crew architecture](docs/images/cc-crew.png)
 
-## Features
+## How it works
 
-- Lightweight Alpine base
-- `git`, `bash`, and `gh` (GitHub CLI) included
-- Claude Code installed globally via npm
-- Onboarding pre-seeded — no interactive theme/trust prompts on first run
-- Stays alive via `tail -f /dev/null` so you can `docker exec` into it
+`cc-crew up` polls your repo on a fixed interval. Each persona has a queue label and a lock label:
 
-## Build
+| Persona | Queue label | Lock label | Done label | Trigger |
+|---|---|---|---|---|
+| Implementer | `claude-task` | `claude-processing` | `claude-done` | Issue labeled `claude-task` |
+| Reviewer | `claude-review` | `claude-reviewing` | `claude-reviewed` | PR labeled `claude-review` (auto-applied by default) |
+| Addresser | `claude-address` | `claude-addressing` | `claude-addressed` | Reviewer requested changes (auto-detected) |
+| Merger | `claude-merge` | `claude-merging` | — | PR labeled `claude-merge` |
+| Resolver | `claude-resolve-conflict` | `claude-resolving` | — | Merger hits a conflict |
+
+On each tick the orchestrator claims work (adds the lock label), checks out a git worktree, launches a container running `claude -p` with the persona's `CLAUDE.md` as memory, and removes the lock when the container exits.
+
+---
+
+## Prerequisites
+
+- Docker (for the task containers)
+- Go 1.22+ (to build the `cc-crew` binary)
+- `git` and the `gh` CLI on the host
+- A GitHub repo you own (or can label on)
+- An Anthropic account: a **Max/Pro subscription** (recommended — generates an OAuth token) or an **API key** (billed per-token)
+
+---
+
+## Setup
+
+### 1. Clone and build the orchestrator
 
 ```bash
-docker build -t claude-code .
+git clone https://github.com/charleszheng44/cc-crew.git
+cd cc-crew
+make build          # produces ./cc-crew
 ```
 
-## Authentication
+### 2. Pull (or build) the task image
 
-### Claude Code
+The orchestrator dispatches a prebuilt image by default: `ghcr.io/charleszheng44/cc-crew:latest`. To use it, just let Docker pull it on first `up`. To build locally:
 
-Two options, depending on your plan.
+```bash
+make docker-build              # builds ghcr.io/charleszheng44/cc-crew:latest
+make docker-build-sandbox      # optional — Ubuntu-based image for `cc-crew sandbox`
+```
 
-**Max / Pro subscription (recommended)** — generate a long-lived OAuth token on any machine with a browser where you're already logged in:
+### 3. Get your Claude credential
+
+**Max/Pro (recommended)** — on any machine where you're logged into Claude Code:
 
 ```bash
 claude setup-token
 ```
 
-Pass the resulting token as `CLAUDE_CODE_OAUTH_TOKEN`. Usage counts against your subscription.
+Export the resulting token:
 
-**API key** — pass `ANTHROPIC_API_KEY`. Bills per-token against API credits; does **not** use your Max/Pro subscription.
+```bash
+export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+```
 
-### GitHub
+**API key instead** — `export ANTHROPIC_API_KEY=sk-ant-...`. This bills per token against API credits and does **not** use your Max/Pro subscription.
 
-Set `GH_TOKEN` to a token for the account you want to operate as. Each GitHub account = its own token.
+### 4. Get GitHub tokens (one per persona)
 
-**Fine-grained token scoped to personal repos only** (recommended over classic PATs):
+Each persona operates as its own GitHub account, so create **one fine-grained token per persona** (implementer and reviewer — plus merger, which reuses the reviewer token). This keeps commits, PRs, and reviews visibly attributed to different identities.
+
+For each token:
 
 1. Go to https://github.com/settings/personal-access-tokens/new
-2. **Resource owner:** your own username (not any org) — this alone excludes org repos
-3. **Repository access:** *All repositories* or *Only select repositories*
-4. **Repository permissions:** Contents, Pull requests, Issues = Read and write; Workflows = Read and write (if touching `.github/workflows/`)
+2. **Resource owner:** your own username (not an org) — scopes the token to personal repos only
+3. **Repository access:** *Only select repositories* — pick the target repo
+4. **Repository permissions:** Contents, Pull requests, Issues = **Read and write**. Workflows = **Read and write** if you expect PRs to touch `.github/workflows/`.
 5. Leave **Account permissions** at "No access"
 
-Classic PATs are account-wide and include all orgs you belong to — avoid for scoped use.
+Avoid classic PATs — they're account-wide and include every org you belong to.
 
-## Run
-
-Start the container detached with all auth wired in:
-
-```bash
-docker run -d --name claude \
-  -e CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-... \
-  -e GH_TOKEN=github_pat_... \
-  -e GIT_AUTHOR_NAME="Your Name" \
-  -e GIT_AUTHOR_EMAIL="you@example.com" \
-  -e GIT_COMMITTER_NAME="Your Name" \
-  -e GIT_COMMITTER_EMAIL="you@example.com" \
-  -v "$PWD":/workspace \
-  claude-code
-```
-
-Wire `gh` as git's credential helper (once per container) so `git push` over HTTPS works:
-
-```bash
-docker exec claude gh auth setup-git
-```
-
-## Sending commands
-
-From the host:
-
-```bash
-docker exec claude claude -p "explain main.go"
-docker exec claude claude -p --dangerously-skip-permissions "run the tests and summarize"
-```
-
-`claude -p` is print/non-interactive mode — ideal for scripting. `--dangerously-skip-permissions` lets Claude run tools (bash, edits) without per-use approval; the container's `bypassPermissionsModeAccepted` is pre-seeded so this never prompts.
-
-Optional alias on the host:
-
-```bash
-alias claude='docker exec claude claude'
-```
-
-## Scoped permissions (alternative to `--dangerously-skip-permissions`)
-
-If you'd rather allow a specific set of commands instead of bypassing permissions entirely, mount a `settings.json` at `/root/.claude/settings.json`. Per-persona starters live under `personas/<role>/settings.json` — e.g. `personas/reviewer/settings.json` allows common `gh` and `git` operations and denies destructive ones (force push, hard reset, `rm -rf`).
-
-```bash
-docker run -d --name claude \
-  -e CLAUDE_CODE_OAUTH_TOKEN=... \
-  -e GH_TOKEN=... \
-  -e GIT_AUTHOR_NAME="Your Name" \
-  -e GIT_AUTHOR_EMAIL="you@example.com" \
-  -e GIT_COMMITTER_NAME="Your Name" \
-  -e GIT_COMMITTER_EMAIL="you@example.com" \
-  -v "$PWD/personas/reviewer/settings.json:/root/.claude/settings.json:ro" \
-  -v "$PWD":/workspace \
-  claude-code
-```
-
-Then drop `--dangerously-skip-permissions` from your `claude -p` calls. Allow-listed commands run directly; anything else will prompt and hang in `-p` mode — that's the signal to add it to the persona's `settings.json`.
-
-**Pattern syntax:** `Bash(cmd:*)` matches any args, `Bash(cmd)` requires exact match. `deny` rules override `allow`. Edit `settings.json` and restart the container to pick up changes.
-
-## Personas (persistent memory)
-
-A persona bundles the files a role needs: a `CLAUDE.md` (Claude Code loads
-this as user-level memory on every invocation) and a `settings.json` of
-scoped permissions. Each lives under `personas/<role>/` — see
-`personas/reviewer/` for a starter.
-
-```bash
-docker run -d --name claude-reviewer \
-  -e CLAUDE_CODE_OAUTH_TOKEN=... \
-  -e GH_TOKEN=... \
-  -v "$PWD/personas/reviewer/CLAUDE.md:/root/.claude/CLAUDE.md:ro" \
-  -v "$PWD/personas/reviewer/settings.json:/root/.claude/settings.json:ro" \
-  -v "$PWD":/workspace \
-  claude-code
-```
-
-Swap to a different persona by stopping the container and mounting a
-different directory. Edits to the host files take effect on the next
-`claude -p` call — no rebuild needed.
-
-## Working directories
-
-`WORKDIR` defaults to `/workspace`. Control what lives there with `-v`, and override per-command with `-w`:
-
-```bash
-# Single project
-docker run -d --name claude -v /home/you/myproject:/workspace ... claude-code
-
-# Multiple projects, switch per command
-docker run -d --name claude -v /home/you/Work:/workspace ... claude-code
-docker exec -w /workspace/projectA claude claude -p "..."
-docker exec -w /workspace/projectB claude claude -p "..."
-```
-
-Files edited by Claude land in your bind-mounted host directory.
-
-## Switching GitHub accounts
-
-No state to clear — stop the container and start a new one with a different `GH_TOKEN`:
-
-```bash
-docker rm -f claude
-docker run -d --name claude -e GH_TOKEN=<other-token> ... claude-code
-```
-
-Verify which account is active:
-
-```bash
-docker exec claude gh auth status
-docker exec claude gh api user -q .login
-```
-
-## Teardown
-
-```bash
-docker rm -f claude
-```
-
-## Orchestrator: `cc-crew up` / `status` / `reset`
-
-cc-crew includes a Go CLI that watches a GitHub repo and dispatches
-this image automatically: issues labeled `claude-task` get picked up
-by the implementer persona, PRs labeled `claude-review` by the reviewer.
-
-### Build
-
-```bash
-make build                 # produces ./cc-crew
-```
-
-### Run
-
-From inside a clone of the target repo:
-
-Before the first `up`, run `cc-crew init` once per repo to create the nine lifecycle labels on the remote (`claude-task`, `claude-processing`, `claude-done`, `claude-review`, `claude-reviewing`, `claude-reviewed`, `claude-address`, `claude-addressing`, `claude-addressed`). It's safe to re-run — already-present labels are reported and skipped.
+Then:
 
 ```bash
 export GH_TOKEN_IMPLEMENTER=github_pat_...
 export GH_TOKEN_REVIEWER=github_pat_...
-export GH_TOKEN=$GH_TOKEN_IMPLEMENTER      # used for orchestrator's own API calls
-export CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oat01-...
+export GH_TOKEN=$GH_TOKEN_IMPLEMENTER         # used for the orchestrator's own API calls
+
 export IMPLEMENTER_GIT_NAME="implementer-bot"
 export IMPLEMENTER_GIT_EMAIL="impl@example.com"
 export REVIEWER_GIT_NAME="reviewer-bot"
 export REVIEWER_GIT_EMAIL="rev@example.com"
-
-./cc-crew init                     # create the 9 cc-crew labels on the remote (idempotent)
-./cc-crew up                       # foreground; Ctrl-C to stop
-./cc-crew up --max-implementers 3 --max-reviewers 2
-./cc-crew status                   # in another terminal; stateless
-./cc-crew reset                    # dry run
-./cc-crew reset --yes              # actually clean up cc-crew state
 ```
 
-See `docs/superpowers/specs/2026-04-16-cc-crew-orchestrator-design.md`
-for the full design.
+### 5. Create the lifecycle labels on the target repo
+
+From inside a clone of your target repo, run `cc-crew init` **once per repo** to create the 15 labels cc-crew uses. It's idempotent — already-present labels are reported and skipped.
+
+```bash
+cd /path/to/your/repo
+/path/to/cc-crew/cc-crew init
+```
+
+You should see `created:` lines for each label (or `exists:` if rerunning).
+
+---
+
+## Usage
+
+### Start the orchestrator
+
+From inside a clone of the target repo:
+
+```bash
+cc-crew up
+```
+
+This runs in the foreground and logs to stderr. Ctrl-C to stop — any in-flight containers are killed and their locks released so the next start can pick work back up.
+
+Common flags:
+
+```bash
+cc-crew up --max-implementers 3 --max-reviewers 2 --max-mergers 2
+cc-crew up --auto-review=false          # don't auto-apply claude-review to new PRs
+cc-crew up --continuous=false           # disable address+re-review loops
+cc-crew up --poll-seconds 30            # faster polling (default: 60s)
+cc-crew up --base-branch develop        # default: repo's GitHub default branch
+cc-crew up --model claude-sonnet-4-6    # default: claude-opus-4-7
+```
+
+See `cc-crew up --help` for the full list.
+
+### Dispatch work: label an issue
+
+Open an issue describing the change you want. Add the `claude-task` label. Within one poll interval the implementer will:
+
+1. Take the lock (`claude-processing`)
+2. Check out a worktree on `claude/issue-<N>`
+3. Launch a container running Claude Code with the implementer persona
+4. When Claude finishes: commit, push, open a PR titled `Resolve #<N>: <title>`
+5. Drop the lock; apply `claude-done` to the issue; apply `claude-review` to the new PR (when `--auto-review` is on)
+
+The reviewer then picks up the PR, posts a single review. If changes are requested, cc-crew auto-labels it `claude-address` and the implementer returns to the same branch to respond.
+
+### Merging
+
+PRs don't auto-merge. Approve one and add the `claude-merge` label to hand it to the merger. If the merger can't fast-forward, it applies `claude-resolve-conflict` and the resolver rebases + force-pushes; on success the PR goes back into the merge queue.
+
+### Check what's running
+
+```bash
+cc-crew status
+```
+
+Stateless snapshot of: pending issues/PRs per queue, active containers, worktrees, and recent lifecycle label counts.
+
+### Reset (emergency cleanup)
+
+If the orchestrator crashed mid-dispatch, or you want a clean slate:
+
+```bash
+cc-crew reset          # dry run — prints every container, worktree, ref, and label it would touch
+cc-crew reset --yes    # actually apply: kills containers, removes worktrees, strips lock labels, requeues
+```
+
+### Teardown
+
+Stopping the orchestrator (`Ctrl-C`) already cleans up containers and lock labels. If you want to also remove the labels themselves from the remote, do that manually via `gh label delete`.
+
+---
+
+## Interactive mode: `cc-crew sandbox`
+
+For ad-hoc exploration or manual prompting — not driven by GitHub labels — run a per-repo interactive Claude session in a container:
+
+```bash
+cc-crew sandbox                          # isolated sandbox with its own ~/.cache/cc-crew/sandbox-home/<repo>
+cc-crew sandbox --use-host-claude        # share your host ~/.claude (plugins, skills, MCP, history)
+```
+
+The sandbox bind-mounts your current directory at `/workspace` and runs as your host UID/GID so any files Claude writes stay owned by you. Reads the same `CLAUDE_CODE_OAUTH_TOKEN` / `GH_TOKEN_IMPLEMENTER` env as `cc-crew up`.
+
+---
+
+## Personas (customising behaviour)
+
+Each persona is a directory under `personas/<role>/` containing a `CLAUDE.md` (loaded as user-level memory every invocation) and a `settings.json` (scoped permissions). The docker image bakes these in, so `cc-crew up` needs no persona mounts — edit the files and rebuild the image to change behaviour, or mount an override at runtime.
+
+- `personas/implementer/` — resolves issues and opens PRs
+- `personas/reviewer/` — reviews PRs; posts exactly one review
+- `personas/resolver/` — rebases and force-pushes-with-lease on conflicts
+
+---
+
+## Environment variable reference
+
+| Variable | Required when | Purpose |
+|---|---|---|
+| `CLAUDE_CODE_OAUTH_TOKEN` | Always (or `ANTHROPIC_API_KEY`) | Claude auth |
+| `ANTHROPIC_API_KEY` | Alternative to OAuth token | Claude auth (per-token billing) |
+| `GH_TOKEN` | Always | Orchestrator's own GitHub API calls |
+| `GH_TOKEN_IMPLEMENTER` | `--max-implementers > 0` | Implementer's commits / PRs |
+| `GH_TOKEN_REVIEWER` | `--max-reviewers > 0` or `--max-mergers > 0` | Reviewer's reviews; merger's merges |
+| `IMPLEMENTER_GIT_NAME` / `..._EMAIL` | Implementer enabled | Commit identity |
+| `REVIEWER_GIT_NAME` / `..._EMAIL` | Reviewer enabled | Commit identity |
+
+All CLI flags also accept equivalent `CC_*` env vars (e.g. `CC_MAX_IMPLEMENTERS=3`, `CC_POLL_SECONDS=30`, `CC_MODEL=claude-sonnet-4-6`). Flag > env > default.
+
+---
+
+## Troubleshooting
+
+- **`gh auth status` fails inside a container** — the orchestrator forwards `GH_TOKEN` per-persona; if you're `docker exec`ing into an image manually, export it yourself.
+- **Claude hangs in `-p` mode** — it likely hit a permission prompt. Either use `--dangerously-skip-permissions` (default for dispatched tasks) or add the command to the persona's `settings.json` allow list.
+- **Issue got labeled `claude-failed`** — cc-crew quarantines after 3 consecutive dispatch failures (configurable via `--quarantine-threshold`). Remove the label to re-enable dispatch.
+- **Stale locks after a crash** — `cc-crew reset --yes` clears them; alternatively, `up` auto-reclaims locks older than `--reclaim-seconds` (30m default).
+
+Full design notes live under `docs/superpowers/specs/`.
